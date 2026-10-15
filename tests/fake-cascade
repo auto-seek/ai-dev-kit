@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# fake-cascade — a minimal, stateful stand-in for the `cascade-auto` CLI, used
+# by the ai-dev-kit test net (tests/run-gate-tests.sh). It emulates ONLY the
+# subset of subcommands the gate and the self-serve write-loop use, and it PINS
+# the CLI shape consumed by the kit. Upstream protocol drift is checked by
+# production-workflow.test.cjs against the real Cascade executable, not inferred
+# from this static fixture.
+#
+# Verified contract (installed cascade-auto):
+#   add-node    --id [--reserved-for --required-tier lite|pro|max --deps --dependents --expectations]
+#   get-task    --agent [--agent-tier lite|pro|max --task --timeout]
+#               -> briefing + fencing_token, sets ACTIVE
+#   finish-task --task [--agent] --token
+#               [--success|--fail|--release --summary --critical ...]
+#   list-nodes  [--state --pending-only]     -> nested JSON: data.nodes[]
+#   remove-node --node [--cascade]           (NO --reason)
+#   history                                  -> markdown
+# State lives in <storage>/nodes.tsv (file mode only). NOT a production tool.
+#
+# Fault injection via env (degradation tests):
+#   FAKE_CASCADE_VERSION=<x.y|none> `--version` prints a version (default 0.7.0);
+#                                 `none` reproduces the old unsupported flag
+#                                 shape that once crashed the gate under set -e.
+#   FAKE_CASCADE_MODE=ok|fail|hang|badjson|nosuccess   list-nodes fault modes.
+#   FAKE_CASCADE_EXPECT_REDIS_URL=<url>   assert the caller passed exactly this
+#                                 --redis-url (secrets-overlay tests); mismatch
+#                                 or absence behaves as a connection failure.
+#   FAKE_CASCADE_EXPECT_GIT_REMOTE=<url>  assert --git-remote resolution.
+#   FAKE_CASCADE_EXPECT_GIT_CACHE=<path>  assert optional --git-cache resolution.
+# Perspective: gate/lane consumers that depend on the published Cascade CLI contract.
+# Invariant: the fixture preserves observable CLI flags, state transitions, fencing,
+#            tier filtering, JSON shape, and injected failure behavior.
+# Goal: make coordination integration regressions fail before a plugin release.
+# Migration: remain a narrow contract fixture; real storage concurrency stays in
+#            Cascade's integration, hosted-remote, and container test suites.
+set -u
+
+STORAGE=""
+REDIS_URL_SEEN=""
+GIT_REMOTE_SEEN=""
+GIT_CACHE_SEEN=""
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --storage)   STORAGE="${2:-}"; shift 2 ;;
+    --redis-url) REDIS_URL_SEEN="${2:-}"; shift 2 ;;
+    --git-remote) GIT_REMOTE_SEEN="${2:-}"; shift 2 ;;
+    --git-cache) GIT_CACHE_SEEN="${2:-}"; shift 2 ;;
+    --namespace) shift 2 ;;
+    --version)
+      if [ "${FAKE_CASCADE_VERSION:-0.7.0}" != "none" ]; then echo "cascade ${FAKE_CASCADE_VERSION:-0.7.0}"; exit 0; fi
+      echo "usage: cascade [-h] [--storage STORAGE] {add-node,get-task,finish-task,list-nodes,remove-node,history} ..." >&2
+      exit 2 ;;
+    -h|--help) echo "usage: cascade ..."; exit 0 ;;
+    --*) shift ;;
+    *) break ;;
+  esac
+done
+
+SUB="${1:-}"; shift 2>/dev/null || true
+
+if [ -n "${FAKE_CASCADE_EXPECT_REDIS_URL:-}" ] && [ "$REDIS_URL_SEEN" != "$FAKE_CASCADE_EXPECT_REDIS_URL" ]; then
+  echo "fake-cascade: wrong redis url: got '${REDIS_URL_SEEN:-<none>}'" >&2
+  exit 1
+fi
+if [ -n "${FAKE_CASCADE_EXPECT_GIT_REMOTE:-}" ] && [ "$GIT_REMOTE_SEEN" != "$FAKE_CASCADE_EXPECT_GIT_REMOTE" ]; then
+  echo "fake-cascade: wrong git remote: got '${GIT_REMOTE_SEEN:-<none>}'" >&2
+  exit 1
+fi
+if [ -n "${FAKE_CASCADE_EXPECT_GIT_CACHE:-}" ] && [ "$GIT_CACHE_SEEN" != "$FAKE_CASCADE_EXPECT_GIT_CACHE" ]; then
+  echo "fake-cascade: wrong git cache: got '${GIT_CACHE_SEEN:-<none>}'" >&2
+  exit 1
+fi
+
+case "${FAKE_CASCADE_MODE:-ok}" in
+  fail)      echo "fake-cascade: storage unreachable" >&2; exit 1 ;;
+  hang)      sleep 30; exit 0 ;;
+  badjson)   printf '{ this is not json '; exit 0 ;;
+  nosuccess) printf '{\n  "data": { "nodes": [] }\n}\n'; exit 0 ;;   # no "success" field
+esac
+
+[ -n "$STORAGE" ] || STORAGE="${GIT_CACHE_SEEN:-${TMPDIR:-/tmp}/fake-cascade-store}"
+mkdir -p "$STORAGE" 2>/dev/null || true
+DB="$STORAGE/nodes.tsv"
+[ -f "$DB" ] || : > "$DB"
+TOKEN_COUNTER="$STORAGE/next-token"
+[ -f "$TOKEN_COUNTER" ] || printf '0\n' > "$TOKEN_COUNTER"
+TAB="$(printf '\t')"
+
+get_opt() { local want="$1"; shift; while [ $# -gt 0 ]; do [ "$1" = "$want" ] && { printf '%s' "${2:-}"; return 0; }; shift; done; return 1; }
+node_state() { awk -F"$TAB" -v id="$1" '$1==id{print $2; exit}' "$DB"; }
+node_token() { awk -F"$TAB" -v id="$1" '$1==id{print $3; exit}' "$DB"; }
+node_agent() { awk -F"$TAB" -v id="$1" '$1==id{print $4; exit}' "$DB"; }
+node_required_tier() { awk -F"$TAB" -v id="$1" '$1==id{print $5; exit}' "$DB"; }
+node_reserved_for() { awk -F"$TAB" -v id="$1" '$1==id{print $6; exit}' "$DB"; }
+db_del()     { grep -v -F "$(printf '%s\t' "$1")" "$DB" > "$DB.tmp" 2>/dev/null || : > "$DB.tmp"; mv "$DB.tmp" "$DB"; }
+db_set()     { awk -F"$TAB" -v OFS="$TAB" -v id="$1" -v st="$2" -v tk="${3:-}" -v ag="${4:-}" '$1==id{$2=st; $3=tk; $4=ag} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"; }
+next_token() { local n; n="$(cat "$TOKEN_COUNTER")"; n=$((n + 1)); printf '%s\n' "$n" > "$TOKEN_COUNTER"; printf '%s' "$n"; }
+tier_rank() { case "${1:-}" in "") echo 0 ;; lite) echo 1 ;; pro) echo 2 ;; max) echo 3 ;; *) return 1 ;; esac; }
+tier_allows() { local agent_rank required_rank; [ -z "${2:-}" ] && return 0; agent_rank="$(tier_rank "${1:-}")" || return 1; required_rank="$(tier_rank "$2")" || return 1; [ "$agent_rank" -ge "$required_rank" ]; }
+ok()   { printf '{\n  "success": true,\n  "message": "%s",\n  "data": { %s }\n}\n' "$1" "${2:-}"; }
+err()  { printf '{\n  "success": false,\n  "message": "%s"\n}\n' "$1" >&2; exit 1; }
+
+case "$SUB" in
+  add-node)
+    id="$(get_opt --id "$@" || get_opt -i "$@" || true)"
+    required_tier="$(get_opt --required-tier "$@" || true)"
+    reserved_for="$(get_opt --reserved-for "$@" || true)"
+    [ -n "$id" ] || err "add-node: --id required"
+    tier_rank "$required_tier" >/dev/null || err "Invalid capability tier '$required_tier'. Valid tiers: lite, pro, max"
+    [ -z "$(node_state "$id")" ] || err "node $id already exists"
+    printf '%s\t%s\t\t\t%s\t%s\n' "$id" "READY" "$required_tier" "$reserved_for" >> "$DB"
+    ok "Node $id added successfully" "\"node_id\": \"$id\", \"state\": \"READY\", \"required_tier\": \"$required_tier\""
+    ;;
+  get-task)
+    agent="$(get_opt --agent "$@" || get_opt -a "$@" || true)"
+    agent_tier="$(get_opt --agent-tier "$@" || true)"
+    [ -n "$agent" ] || err "get-task: --agent required"
+    tier_rank "$agent_tier" >/dev/null || err "Invalid capability tier '$agent_tier'. Valid tiers: lite, pro, max"
+    want="$(get_opt --task "$@" || get_opt -t "$@" || true)"
+    if [ -n "$want" ]; then
+      id="$want"
+      reserved_for="$(node_reserved_for "$id")"
+      [ -z "$reserved_for" ] || [ "$reserved_for" = "$agent" ] || err "Task $id is reserved by '$reserved_for'"
+      [ "$(node_state "$id")" = "READY" ] || err "task $id not READY"
+      tier_allows "$agent_tier" "$(node_required_tier "$id")" || err "Task $id requires tier '$(node_required_tier "$id")', but agent $agent declared '${agent_tier:-unspecified}'"
+    else
+      agent_rank="$(tier_rank "$agent_tier")"
+      id="$(awk -F"$TAB" -v ar="$agent_rank" -v owner="$agent" '$2=="READY"&&($6==""||$6==owner){rr=($5=="lite"?1:($5=="pro"?2:($5=="max"?3:0))); if(ar>=rr){print $1; exit}}' "$DB")"
+    fi
+    if [ -z "$id" ]; then
+      if awk -F"$TAB" '$2=="READY"{found=1} END{exit !found}' "$DB"; then
+        err "No READY tasks match agent tier '${agent_tier:-unspecified}'"
+      fi
+      ok "No tasks available" "\"task_id\": null"; exit 0
+    fi
+    token="$(next_token)"
+    db_set "$id" "ACTIVE" "$token" "$agent"
+    printf 'Task: %s\n' "$id"
+    [ -n "$(node_required_tier "$id")" ] && printf 'required_tier: %s\n' "$(node_required_tier "$id")"
+    [ -n "$agent_tier" ] && printf 'agent_tier: %s\n' "$agent_tier"
+    printf '%s\n' '---'
+    printf 'fencing_token: %s\n' "$token"
+    ;;
+  finish-task)
+    id="$(get_opt --task "$@" || get_opt -t "$@" || true)"
+    agent="$(get_opt --agent "$@" || get_opt -a "$@" || true)"
+    token="$(get_opt --token "$@" || true)"
+    [ -n "$id" ] || err "finish-task: --task required"
+    [ -n "$(node_state "$id")" ] || err "no such node $id"
+    [ "$(node_state "$id")" = "ACTIVE" ] || err "task $id not ACTIVE"
+    [ -n "$token" ] || err "Fencing token is required"
+    [ "$token" = "$(node_token "$id")" ] || err "Stale fencing token"
+    [ -z "$agent" ] || [ "$agent" = "$(node_agent "$id")" ] || err "Task $id is claimed by '$(node_agent "$id")', not '$agent'"
+    outcome=COMPLETED
+    case " $* " in *" --fail "*) outcome=FAILED ;; *" --release "*) outcome=READY ;; esac
+    db_set "$id" "$outcome" "" ""
+    ok "Task $id completed" "\"task_id\": \"$id\", \"outcome\": \"$outcome\""
+    ;;
+  remove-node)
+    id="$(get_opt --node "$@" || get_opt -n "$@" || true)"
+    [ -n "$id" ] || err "remove-node: --node required"
+    db_del "$id"; ok "Node $id removed" "\"node_id\": \"$id\""
+    ;;
+  list-nodes)
+    # Faithful subset of the real nested shape: data.nodes[] with id BEFORE
+    # state and pending_dependencies, plus top-level "success": true — every
+    # field scripts/skill-first-gate.sh actually reads. (by_state is omitted;
+    # nothing parses it.)
+    # n=0 in BEGIN: an empty store must still emit VALID JSON ("count": 0),
+    # matching the real CLI — an uninitialized awk var prints as empty string.
+    awk -F"$TAB" '
+      BEGIN { n=0; print "{"; print "  \"success\": true," }
+      { ids[++n]=$1; st[n]=$2; tier[n]=$5; reserved[n]=$6 }
+      END {
+        print "  \"message\": \"Listed " n " nodes\","
+        print "  \"data\": {"
+        print "    \"nodes\": ["
+        for (i=1;i<=n;i++) {
+          printf "      {\n        \"id\": \"%s\",\n        \"state\": \"%s\",\n        \"pending_dependencies\": 0", ids[i], st[i]
+          if (tier[i] != "") printf ",\n        \"required_tier\": \"%s\"", tier[i]
+          if (reserved[i] != "") printf ",\n        \"reserved_for\": \"%s\"", reserved[i]
+          else printf ",\n        \"reserved_for\": null"
+          printf "\n      }%s\n", (i<n?",":"")
+        }
+        print "    ],"
+        print "    \"count\": " n
+        print "  }"
+        print "}"
+      }' "$DB"
+    ;;
+  history)
+    echo "# Cascade coordination history"; echo
+    while IFS="$TAB" read -r id state; do [ -n "$id" ] && echo "- **$id** — $state"; done < "$DB"
+    ;;
+  "") echo "usage: cascade [--storage S] {add-node,get-task,finish-task,list-nodes,remove-node,history} ..." >&2; exit 2 ;;
+  *)  echo "fake-cascade: unsupported subcommand '$SUB'" >&2; exit 2 ;;
+esac

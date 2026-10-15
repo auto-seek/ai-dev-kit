@@ -1,0 +1,18 @@
+{
+  "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
+  "sourceCommit": "46e91ac5af695d8eaf7c5fc2ff4db6ee77f24123",
+  "files": [
+    "scripts/cascade-flow.cjs",
+    "scripts/cascade-flow/app.js",
+    "scripts/cascade-flow/index.html",
+    "scripts/cascade-flow/layout.js",
+    "scripts/cascade-flow/snapshot.cjs",
+    "scripts/cascade-flow/style.css",
+    "scripts/cascade-flow/vendor/DAGRE-LICENSE",
+    "scripts/cascade-flow/vendor/README.md",
+    "scripts/cascade-flow/vendor/dagre-3.1.1.esm.js",
+    "scripts/cascade-flow/vendor/dagre.esm.js.LEGAL.txt",
+    "scripts/cascade-process.cjs"
+  ],
+  "packagedAt": "2026-10-13"
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+.ai-dev-kit/graph/
+
+.ai-dev-kit/*
+!.ai-dev-kit/test-scope.json
+!.ai-dev-kit/gate-contract.json
+!.ai-dev-kit/requirements.md
+*.bak
+docs/development/
+docs/working/

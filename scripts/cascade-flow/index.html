@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Cascade · 任务依赖图</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <div class="window">
+      <header class="header">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">C</span> Cascade <span id="project"></span></div>
+        <span class="read-only">只读任务流</span>
+      </header>
+      <main id="main">
+        <div class="page-heading">
+          <div><h1>任务流</h1><p class="intro" id="intro">读取共享中心的任务快照，请稍候。</p></div>
+          <p id="headline" class="headline" aria-live="polite">正在读取任务…</p>
+        </div>
+        <div class="notice" id="notice" role="alert" hidden><p class="notice-title" id="notice-title"></p><p id="notice-message"></p></div>
+        <p id="target-notice" class="notice" role="status" hidden></p>
+        <section id="tasks" aria-label="任务依赖图" hidden>
+          <div class="graph-panel">
+              <div class="toolbar">
+                <div class="scope" aria-label="任务范围"><button id="scope-current" aria-pressed="true">当前任务</button><button id="scope-all" aria-pressed="false">全部任务</button></div>
+                <span class="graph-count" id="graph-count"></span>
+                <div class="zoom-controls" role="group" aria-label="任务图缩放">
+                  <button id="zoom-out" type="button" aria-label="缩小任务图" title="缩小">−</button>
+                  <button id="zoom-reset" type="button" aria-label="当前缩放 100%，恢复 100%" title="恢复 100%">100%</button>
+                  <button id="zoom-in" type="button" aria-label="放大任务图" title="放大">+</button>
+                </div>
+              </div>
+              <div id="viewport" class="viewport" tabindex="0" aria-label="从左到右的任务依赖，拖动空白处或滚动查看；Ctrl 或 Command 加滚轮缩放，方向键滚动，按 Tab 选择任务">
+                <div id="graph-space"><div id="graph"><svg id="edges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg><div id="nodes" role="group" aria-label="依赖顺序中的任务"></div></div></div>
+                <div class="empty" id="empty" hidden><strong>当前没有待执行的任务</strong><p>切换到「全部任务」查看历史记录。</p></div>
+              </div>
+          </div>
+          <p id="selection-status" class="sr-only" role="status"></p>
+        </section>
+        <noscript><p class="notice">此只读看板需要启用 JavaScript 才能读取任务。</p></noscript>
+      </main>
+      <div id="measure" inert aria-hidden="true"></div>
+      <footer class="footer"><div class="times"><span id="fetched-at">尚未读到快照</span><span id="last-event-at">最近任务事件：尚未读取</span></div><p>“已报完成”不代表独立验收。本看板不验证验收，也不判断员工是否在线。</p></footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "ai-dev-kit",
+  "version": "0.17.2",
+  "description": "AI Dev Kit skills and slash-invoked workflows for skill-first development discipline.",
+  "author": {
+    "name": "autoseek"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/auto-seek/ai-dev-kit",
+  "repository": "https://github.com/auto-seek/ai-dev-kit",
+  "skills": "./skills/",
+  "keywords": [
+    "ai-dev-kit",
+    "skills",
+    "gitflow",
+    "review",
+    "testing",
+    "documentation"
+  ]
+}

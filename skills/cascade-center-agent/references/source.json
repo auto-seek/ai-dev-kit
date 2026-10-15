@@ -1,0 +1,21 @@
+{
+  "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
+  "sourceCommit": "683080f68ee8e2ea19c5aa2b701ca0c4aa7379a9",
+  "files": [
+    "scripts/cascade-node-client.cjs",
+    "scripts/cascade-node-join.cjs",
+    "scripts/cascade-node-native.py",
+    "scripts/cascade-portal/admission.cjs",
+    "scripts/cascade-portal/collaboration-store.cjs",
+    "scripts/cascade-portal/store.cjs",
+    "scripts/cascade-portal/workflow-store.cjs",
+    "scripts/cascade-portal-client.cjs",
+    "scripts/cascade-portal-publish.py",
+    "scripts/cascade-process.cjs"
+  ],
+  "runtime": "0.8.2+nodecollab.1",
+  "packagedAt": "2026-10-15",
+  "localModifications": {
+    "scripts/cascade-node-join.cjs": "Explicit --origin, CASCADE_CENTER_ORIGIN or saved enrollment origin; no built-in center address."
+  }
+}

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark"><title>团队中心</title>
+  <link rel="stylesheet" href="/portal.css"><script src="/portal.js" defer></script>
+</head>
+<body>
+  <section id="login-screen" class="login-screen" aria-labelledby="login-title">
+    <div class="login-card">
+      <a href="/login" class="brand"><span class="brand-mark" aria-hidden="true">↗</span> 团队中心</a>
+      <h1 id="login-title">登录团队中心</h1><p id="login-intro" class="explanation">使用团队账号，继续处理需求与验收。</p>
+      <form id="login-form">
+        <label for="username">账号</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" required>
+        <div class="password-label"><label for="password">密码</label><button id="forgot-password" class="text-button" type="button">忘记密码？</button></div>
+        <div class="password-input"><input id="password" name="password" type="password" autocomplete="current-password" required><button id="show-password" class="text-button" type="button" aria-pressed="false" aria-label="显示密码">显示</button></div>
+        <p id="login-error" class="inline-status" role="alert"></p><p id="login-help" class="explanation" hidden>请联系团队管理员重置密码。重置后使用新密码登录，旧会话会失效。</p>
+        <button id="login-submit" type="submit" disabled>正在检查登录状态…</button>
+      </form>
+      <p class="login-note">8 小时后或连续 30 分钟无操作，将需要重新登录。</p>
+    </div>
+  </section>
+  <div id="workspace" class="shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/#home"><span class="brand-mark" aria-hidden="true">↗</span> 团队中心</a>
+      <nav class="nav" aria-label="工作区">
+        <a href="/#home" data-page="home">工作台</a>
+        <a href="/#requests" data-page="requests">需求 <span id="request-count"></span></a>
+        <a href="/#candidates" data-page="candidates">候选验收 <span id="candidate-count"></span></a>
+        <a href="/flow">任务流 <span aria-hidden="true">↗</span></a>
+      </nav>
+      <div class="account"><span id="identity"></span><button id="logout" class="text-button" type="button">退出登录</button><p id="logout-status" class="inline-status" role="status"></p></div>
+    </aside>
+    <main class="workspace">
+      <header class="page-header"><div><p id="project" class="eyebrow"></p><h1 id="page-title" tabindex="-1">工作台</h1><p id="page-intro" class="explanation">先处理需要你参与的事。</p></div><a class="button" id="compose-link" href="/#compose">＋ 提交需求</a></header>
+      <div id="error" class="error" role="alert" hidden><p id="error-message"></p></div>
+      <section id="home" class="panel">
+        <div class="section-heading"><h2>待我处理</h2><span class="meta">补充需求 · 验收反馈</span></div><div id="next-step" class="inbox"><p class="empty">正在读取…</p></div>
+        <section class="progress-section"><div class="section-heading"><h2>团队进展</h2><a href="/flow">查看任务流 →</a></div><p id="headline" class="explanation">正在读取团队进展…</p><div id="task-status"></div></section>
+      </section>
+      <section id="requests" class="panel" hidden><div class="list-labels"><span>需求与提交人</span><span>处理状态</span></div><div id="request-list" class="records" aria-label="需求记录"></div></section>
+      <section id="candidates" class="panel" hidden><p class="explanation">查看产物后，记录实际验证结果。意见会交由中心处理。</p><div id="candidate-list" class="records" aria-label="候选记录"></div></section>
+      <section id="compose" class="panel detail" hidden>
+        <a href="/#requests" class="back">← 返回需求</a><form id="new-request"><label for="description">想让团队做什么？</label><textarea id="description" name="description" rows="7" maxlength="20000" required placeholder="描述遇到的问题、希望的体验，以及怎样才算做好。"></textarea><div class="compose-bottom"><p>项目内成员可见，请勿填写密码或私人信息。</p><button type="submit">提交需求</button></div><p id="submit-status" role="status" class="inline-status"></p></form>
+      </section>
+      <section id="detail" class="panel detail" hidden><a id="detail-back" class="back" href="/#requests">← 返回需求</a><div id="detail-record"></div></section>
+      <footer class="status-bar"><div><span id="freshness" role="status"></span><span id="processor-status"></span></div><button id="retry" class="text-button" type="button">刷新记录</button></footer>
+    </main>
+  </div>
+  <noscript>请启用 JavaScript 登录团队中心。</noscript>
+</body>
+</html>

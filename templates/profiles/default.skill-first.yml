@@ -1,0 +1,72 @@
+# AI Dev Kit skill-first profile template.
+# The bootstrap script generates a project-specific .ai-dev-kit/profile.yml from this shape.
+
+project_name: "{{PROJECT_NAME}}"
+project_type: "{{PROJECT_TYPE}}"
+enforcement_profile: balanced
+
+source_dirs:
+  - src
+
+commands:
+  dev: ""
+  build: ""
+  test: ""
+  lint: ""
+  typecheck: ""
+  e2e: ""
+
+graph:
+  provider: auto
+  candidates:
+    - serena
+    - codegraph
+    - code-review-graph
+    - codebase-memory-mcp
+    - graphify
+    - understand-anything
+    - repomix
+  fallback_search: rg
+
+workflow:
+  feature_ledger: docs/development/feature-ledger.md
+  fallback_feature_ledger: .ai-dev-kit/workflow/feature-ledger.md
+  requirements_ledger: .ai-dev-kit/workflow/LEDGER.md
+  findings: .ai-dev-kit/workflow/findings.jsonl
+  doc_registry: .ai-dev-kit/docs/registry.yml
+
+review:
+  # Declare literal test roots in tracked .ai-dev-kit/test-scope.json before preflight.
+  test_review_required: true
+  doc_review_required: true
+  merge_guardian_required: true
+
+merge_policy:
+  target_branch: main # bootstrap detects existing dev/main/master
+  require_feature_worktree: true
+  block_placeholders: true
+  block_open_critical_findings: true
+  block_open_high_findings_on_preflight: true
+
+subtraction:
+  # Max commits a feature branch may accumulate without a recorded
+  # /ai-dev-kit-clean pass before preflight/merge fails on subtraction debt.
+  every_commits: 10
+  gate_enabled: true
+
+
+# Coordination engine (0.8.0+). 'cascade' is the supported engine; 'ledger'
+# is deprecated and retained for explicit existing-project migration. Set up interactively
+# with /ai-dev-kit-cascade-init — it probes the CLI, smoke-tests storage,
+# and rewrites this block. See references/cascade-coordination.md.
+coordination:
+  engine: cascade
+  role: self-serve           # or: orchestrator (graph owner) | worker (shared pool)
+  cascade:
+    storage: file             # or: git (recommended cross-machine) | redis (low latency)
+    storage_path: .ai-dev-kit/cascade
+    git_remote: ""            # git mode: remote name (for example origin), URL, or bare-repo path
+    git_cache: ""             # git mode: optional machine-local cache path
+    redis_url: ""             # keep "" if committed — real URL goes in gitignored profile.local.yml (per-key overlay)
+    namespace: default
+    min_version: ">=0.8.0"

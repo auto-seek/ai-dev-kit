@@ -1,0 +1,77 @@
+{
+  "schema": "ai-dev-kit.skill-market.v1",
+  "name": "ai-dev-kit-local-marketplace",
+  "version": 1,
+  "skills": [
+    {
+      "name": "ai-dev-kit",
+      "displayName": "AI Dev Kit",
+      "description": "Skill-first development discipline for GitFlow loop work, document synchronization, test review, multi-agent review, and merge readiness.",
+      "source": "skills/ai-dev-kit",
+      "skillPackages": [
+        "skills/ai-dev-kit",
+        "skills/ai-dev-kit-loop",
+        "skills/ai-dev-kit-preflight",
+        "skills/ai-dev-kit-test-review",
+        "skills/ai-dev-kit-doc-review",
+        "skills/ai-dev-kit-merge-guardian",
+        "skills/ai-dev-kit-clean",
+        "skills/ai-dev-kit-cascade-init",
+        "skills/cascade-center-agent",
+        "skills/cascade-flow"
+      ],
+      "installTargets": [
+        "codex",
+        "claude",
+        "project",
+        "generic"
+      ],
+      "slashCommands": {
+        "source": "templates/slash-commands/ai-dev-kit",
+        "commands": [
+          {
+            "name": "ai-dev-kit-loop",
+            "description": "Reserve loop work and prepare a dev-based worktree."
+          },
+          {
+            "name": "ai-dev-kit-preflight",
+            "description": "Run preflight gate and required review agents."
+          },
+          {
+            "name": "ai-dev-kit-test-review",
+            "description": "Review changed tests as untrusted evidence."
+          },
+          {
+            "name": "ai-dev-kit-doc-review",
+            "description": "Synchronize docs, ledgers, registry, and code facts."
+          },
+          {
+            "name": "ai-dev-kit-merge-guardian",
+            "description": "Decide whether a branch may merge back to dev."
+          },
+          {
+            "name": "ai-dev-kit-clean",
+            "description": "Evidence-gated subtraction pass to remove loop-accumulated garbage."
+          },
+          {
+            "name": "ai-dev-kit-cascade-init",
+            "description": "Set up a Git task center and optional AutoSeek web access; route project-ID joining and visualization to their dedicated skills."
+          },
+          {
+            "name": "cascade-center-agent",
+            "description": "Join a project with its ID and model level, then check product Git access."
+          },
+          {
+            "name": "cascade-flow",
+            "description": "Open an existing team task flow or start a local read-only Git viewer."
+          }
+        ]
+      },
+      "adapters": {
+        "codex": "templates/adapters/codex/hooks.skill-first.json",
+        "claude": "templates/adapters/claude/settings.skill-first.json",
+        "generic": "templates/adapters/generic/hook-contract.md"
+      }
+    }
+  ]
+}

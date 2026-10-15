@@ -1,0 +1,4 @@
+interface:
+  display_name: "查看瀑布流"
+  short_description: "打开团队任务图，或启动本地只读 Git 瀑布流，查看阶段、依赖和交付"
+  default_prompt: "使用 $cascade-flow 查看当前项目的整体任务流程、依赖和进度；已有网页就打开网页，否则启动本地只读 viewer。"

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "base_ref": "origin/main",
+  "requirements": {
+    "mode": "task-sections",
+    "ledger": ".ai-dev-kit/requirements.md"
+  },
+  "preflight": {
+    "argv": ["npm", "run", "build"],
+    "timeout_seconds": 900
+  }
+}

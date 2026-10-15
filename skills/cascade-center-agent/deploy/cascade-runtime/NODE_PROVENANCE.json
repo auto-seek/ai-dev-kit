@@ -1,0 +1,17 @@
+{
+  "version": "0.8.2+nodecollab.1",
+  "source_base": "bcffbf13c32d188cc9655d2e8f19719742480b7a",
+  "patch": "node-collaboration.patch",
+  "distribution": "private wheel; not an upstream tag",
+  "dependencies": {
+    "filelock": "3.29.0",
+    "typing-extensions": "4.15.0"
+  },
+  "linux_python": {
+    "version": "3.11.14",
+    "build": "20251014",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20251014/cpython-3.11.14%2B20251014-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "sha256": "91ab434738647ab45d630aaa02e3808bb516239beeb52f7799c12a12d1557a38"
+  },
+  "verification_report": "../../docs/verification/node-collaboration-20261008.md"
+}
