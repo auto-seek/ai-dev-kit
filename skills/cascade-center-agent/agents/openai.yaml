@@ -1,4 +1,4 @@
 interface:
   display_name: "Cascade 项目接入"
-  short_description: "配置中心后，用项目 ID 和模型 level 接入团队，读取上下文并交付任务"
-  default_prompt: "使用 $cascade-center-agent，从已有配置或我提供的地址确定中心，再按项目 ID 和模型 level 加入团队；先确认接入成功，再按我的要求领取任务。"
+  short_description: "用复制的项目ID@中心地址和模型 level 接入团队，确认归属后读取上下文并交付任务"
+  default_prompt: "使用 $cascade-center-agent，用我提供的项目ID@中心地址（或项目 ID 加已配置的中心地址）和模型 level 加入团队，并上报你的 harness；先确认接入成功，把归属确认码交给我，再按我的要求领取任务。"

@@ -22,8 +22,8 @@ truth_sources:
 
 # 多人接入 Git 协调中心
 
-已有项目 ID 的团队直接使用 `cascade-center-agent`：输入 ID 和模型 level 后加入，
-再自查项目源码 Git；不执行下文传统准入报告。要搭建带 AutoSeek 登录、项目 ID 和
+已有项目 ID 的团队直接使用 `cascade-center-agent`：输入网页复制的 `项目ID@中心地址`
+和模型 level 后加入，把归属确认码交给使用者，再自查项目源码 Git；不执行下文传统准入报告。要搭建带 AutoSeek 登录、项目 ID 和
 网页的中心，使用 [新版中心搭建](../skills/ai-dev-kit-cascade-init/references/project-id-center.md)；
 查看现有任务使用 [cascade-flow](../skills/cascade-flow/SKILL.md)。下文保留传统 Git
 配置入口的运维流程。

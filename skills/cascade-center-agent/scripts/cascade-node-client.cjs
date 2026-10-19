@@ -119,9 +119,9 @@ async function createNodeClient(config, { activeLease = false } = {}) {
   };
 }
 async function main() {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries(["config", "task", "input", "cursor"].map(k => [k, { type: "string" }])) });
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries(["config", "task", "input", "cursor", "harness"].map(k => [k, { type: "string" }])) });
   const [command] = positionals;
-  if (positionals.length !== 1 || !["inbox", "read", "thread", "follow", "message", "publish", "goal", "workflows", "workflow", "question", "plan", "confirm", "retry", "claim", "renew", "complete", "release"].includes(command)) throw new Error("Usage: cascade-node-client.cjs --config FILE inbox|read|thread|follow|message|publish|goal|workflows|workflow|question|plan|confirm|retry|claim|renew|complete|release [--task ID] [--input JSON_FILE]");
+  if (positionals.length !== 1 || !["inbox", "read", "thread", "follow", "message", "publish", "goal", "workflows", "workflow", "question", "plan", "confirm", "retry", "claim", "renew", "complete", "release", "profile", "owner-code"].includes(command)) throw new Error("Usage: cascade-node-client.cjs --config FILE inbox|read|thread|follow|message|publish|goal|workflows|workflow|question|plan|confirm|retry|claim|renew|complete|release|owner-code [--task ID] [--input JSON_FILE], or profile --harness NAME");
   const client = await createNodeClient(JSON.parse(await fs.readFile(values.config, "utf8")), { activeLease: ["renew", "release"].includes(command) });
   const input = values.input ? JSON.parse(await fs.readFile(values.input, "utf8")) : {};
   let result;
@@ -141,6 +141,8 @@ async function main() {
     else result = await client.api(`workflows/${values.task}`, command === "workflow" ? undefined : { ...input, action: command });
   }
   else if (command === "publish") result = await client.api("publications", input);
+  else if (command === "profile") result = await client.api("agent-profile", { harness: values.harness });
+  else if (command === "owner-code") result = await client.api("owner-code", {});
   else if (["follow", "message"].includes(command)) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(values.task || "")) throw new Error("A valid task ID is required");
     result = await client.api(`tasks/${values.task}/${command === "follow" ? "follow" : "messages"}`, input);

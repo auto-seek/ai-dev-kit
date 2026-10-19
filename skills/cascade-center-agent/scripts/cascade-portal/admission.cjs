@@ -9,6 +9,9 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const TIER = new Set(["lite", "pro", "max"]);
 const joinCode = () => `project_${randomBytes(24).toString("base64url")}`;
+// Crockford base32 without I, L, O and U, so a code read aloud or retyped stays unambiguous.
+const OWNER_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const OWNER_CODE_MS = 10 * 60 * 1000;
 
 function publicKey(value) {
   if (
@@ -243,9 +246,93 @@ function createAdmission({
       hostKey: p.hostKey,
     };
   };
+  // Pairing codes live only in this process: a restart invalidates them and the agent asks again.
+  const ownerCodes = new Map(),
+    ownerFailures = new Map();
+  const prune = (now) => {
+    for (const [key, item] of ownerCodes)
+      if (item.until <= now) ownerCodes.delete(key);
+    for (const [user, item] of ownerFailures)
+      if (item.until <= now) ownerFailures.delete(user);
+  };
   return {
     access,
     list,
+    // Display names and avatars are visible between members of at least one common configured project.
+    sharesProject(viewer, member) {
+      return (
+        viewer === member ||
+        db
+          .prepare(
+            "SELECT a.center FROM members a JOIN members b ON b.center=a.center WHERE a.username=? AND b.username=?",
+          )
+          .all(viewer, member)
+          .some((row) => centers.has(row.center))
+      );
+    },
+    // The agent proves its credential by requesting the code; the member proves the
+    // login by entering it. Only then does the registry record that member as owner.
+    ownerCode(agentId, center) {
+      const agent = db
+        .prepare(
+          "SELECT a.owner FROM agents a JOIN agent_projects p ON p.agent=a.id WHERE a.id=? AND p.center=? AND a.active=1",
+        )
+        .get(agentId, center);
+      if (!agent) fail(404, "项目中没有此 agent");
+      if (agent.owner) fail(409, `此 agent 已确认归属 ${agent.owner}`);
+      const now = Date.now();
+      prune(now);
+      for (const [key, item] of ownerCodes)
+        if (item.agent === agentId) ownerCodes.delete(key);
+      if (ownerCodes.size >= 1000) fail(429, "待确认的归属码较多，请稍后重试");
+      const code = [...randomBytes(10)]
+        .map((byte) => OWNER_ALPHABET[byte & 31])
+        .join("");
+      ownerCodes.set(hash(code), {
+        agent: agentId,
+        center,
+        until: now + OWNER_CODE_MS,
+      });
+      return {
+        code: `${code.slice(0, 5)}-${code.slice(5)}`,
+        expiresAt: new Date(now + OWNER_CODE_MS).toISOString(),
+      };
+    },
+    confirmOwner(user, center, input, checkDeadline) {
+      exact(input, ["code"]);
+      const now = Date.now();
+      prune(now);
+      const failures = ownerFailures.get(user);
+      if (failures?.count >= 10) fail(429, "确认码错误次数较多，请 10 分钟后重试");
+      const code =
+        typeof input.code === "string"
+          ? input.code.toUpperCase().replace(/[\s-]/g, "")
+          : "";
+      const key = /^[0-9A-HJKMNP-TV-Z]{10}$/.test(code) ? hash(code) : null,
+        item = key && ownerCodes.get(key);
+      if (!item || item.center !== center) {
+        if (!failures) ownerFailures.set(user, { until: now + OWNER_CODE_MS, count: 1 });
+        else failures.count++;
+        fail(403, "确认码无效或已过期，请让 agent 重新运行加入命令获取新码");
+      }
+      const agent = tx(() => {
+        if (!access(user, center)) fail(403, "请先加入此项目");
+        const row = db
+          .prepare(
+            "SELECT a.* FROM agents a JOIN agent_projects p ON p.agent=a.id WHERE a.id=? AND p.center=? AND a.active=1",
+          )
+          .get(item.agent, center);
+        if (!row) fail(404, "项目中没有此 agent");
+        if (row.owner && row.owner !== user) fail(409, "此 agent 已确认归属其他成员");
+        if (!row.owner) {
+          db.prepare("UPDATE agents SET owner=? WHERE id=?").run(user, row.id);
+          audit(user, "agent.owner_confirmed", row.id);
+        }
+        return view(db.prepare("SELECT * FROM agents WHERE id=?").get(row.id));
+      }, checkDeadline);
+      ownerCodes.delete(key);
+      return agent;
+    },
     projects(user) {
       return db
         .prepare(

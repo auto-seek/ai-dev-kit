@@ -9,6 +9,7 @@ const { createInterface } = require("node:readline/promises");
 const { createClient } = require("./cascade-portal-client.cjs");
 const { createNodeClient } = require("./cascade-node-client.cjs");
 const { publicKey } = require("./cascade-portal/admission.cjs");
+const { HARNESS } = require("./cascade-portal/store.cjs");
 const { runProcess, redact } = require("./cascade-process.cjs");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
@@ -89,18 +90,29 @@ async function configuredOrigin(origin, directory) {
     }
   }
 }
-async function join({ projectId, level, origin, directory }) {
+// The portal copies "<project ID>@<center origin>"; project IDs never contain "@".
+// A bare ID keeps the separate origin; there is no built-in center.
+function projectAddress(value, origin) {
+  const at = typeof value === "string" ? value.indexOf("@") : -1;
+  if (at < 0) return { projectId: value, origin };
+  const center = value.slice(at + 1);
+  if (origin !== undefined && origin !== center)
+    throw new Error("--origin differs from the center address in the project ID");
+  return { projectId: value.slice(0, at), origin: center };
+}
+async function join({ projectId, level, origin, directory, harness }) {
+  ({ projectId, origin } = projectAddress(projectId, origin));
   if (
     !/^project_[A-Za-z0-9_-]{32}$/.test(projectId || "") ||
     !["lite", "pro", "max"].includes(level)
   )
     throw new Error("Enter a valid project ID and lite, pro or max");
+  if (harness !== undefined && !HARNESS.test(harness))
+    throw new Error("--harness must be a lowercase name such as codex, claude or antigravity");
   origin = await configuredOrigin(origin, directory);
   if (origin === undefined)
-    throw new Error("Center address is required: supply --origin or CASCADE_CENTER_ORIGIN");
-  let url;
-  try { url = new URL(origin); }
-  catch { throw new Error("An exact HTTPS center origin is required"); }
+    throw new Error("Center address is required: use the copied ID@origin, --origin or CASCADE_CENTER_ORIGIN");
+  const url = URL.parse(origin) ?? {};
   if (
     url.protocol !== "https:" ||
     url.origin !== origin ||
@@ -245,7 +257,7 @@ async function join({ projectId, level, origin, directory }) {
       flag: "wx",
     });
     await fs.rename(temp, configFile);
-    await createNodeClient(config);
+    const client = await createNodeClient(config);
     const ssh = `ssh -F ${quote(sshConfig)}`;
     const refs = await run(
       "git",
@@ -269,12 +281,22 @@ async function join({ projectId, level, origin, directory }) {
       `#!/bin/sh\nset -eu\n${environment}exec "$@"\n`,
       { mode: 0o700 },
     );
+    if (harness !== undefined) await client.api("agent-profile", { harness });
+    // A signed-in project member confirms ownership by entering this short-lived code on the web.
+    const ownerCode = enrolled.agent.owner
+      ? null
+      : await client.api("owner-code", {});
     return {
       agent: enrolled.agent.id,
       level,
+      owner: enrolled.agent.owner,
+      ...(harness !== undefined ? { harness } : {}),
       centerId: enrolled.centerId,
       configFile,
       environment: path.join(directory, "environment.sh"),
+      ...(ownerCode
+        ? { ownerConfirmation: { ...ownerCode, confirmAt: `${origin}/#projects` } }
+        : {}),
       ready: true,
     };
   } catch (error) {
@@ -287,26 +309,30 @@ async function join({ projectId, level, origin, directory }) {
 async function main() {
   const { values } = parseArgs({
     options: Object.fromEntries(
-      ["project-id", "level", "origin", "directory"].map((k) => [
+      ["project-id", "level", "origin", "directory", "harness"].map((k) => [
         k,
         { type: "string" },
       ]),
     ),
   });
-  let origin = await configuredOrigin(values.origin, values.directory),
-    projectId = values["project-id"],
-    level = values.level;
-  if (origin === undefined || !projectId || !level) {
+  let projectId = values["project-id"],
+    level = values.level,
+    origin = values.origin;
+  // A copied ID@origin names its center; a bare ID needs a configured one.
+  const centerMissing = async () =>
+    !projectId?.includes("@") &&
+    (await configuredOrigin(origin, values.directory)) === undefined;
+  if (!projectId || !level || (await centerMissing())) {
     if (!process.stdin.isTTY)
-      throw new Error("Supply --project-id and --level, and configure the center with --origin or CASCADE_CENTER_ORIGIN; or run interactively");
+      throw new Error("Supply --project-id and --level, and configure the center with the copied ID@origin, --origin or CASCADE_CENTER_ORIGIN; or run interactively");
     const prompt = createInterface({
       input: process.stdin,
       output: process.stdout,
     });
     try {
-      if (origin === undefined)
+      projectId ||= (await prompt.question("项目 ID（可含 @中心地址）：")).trim();
+      if (await centerMissing())
         origin = (await prompt.question("中心地址（HTTPS，无路径）：")).trim();
-      projectId ||= (await prompt.question("项目 ID：")).trim();
       level ||= (await prompt.question("模型 level（lite/pro/max）：")).trim();
     } finally {
       prompt.close();
@@ -319,13 +345,14 @@ async function main() {
         level,
         origin,
         directory: values.directory,
+        harness: values.harness,
       }),
       null,
       2,
     ),
   );
 }
-module.exports = { join };
+module.exports = { join, projectAddress };
 if (require.main === module)
   main().catch((error) => {
     console.error(`cascade-node-join: ${redact(error.message, true)}`);

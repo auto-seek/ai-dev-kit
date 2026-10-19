@@ -16,7 +16,7 @@
 | `PRODUCT_GIT` | 产品源码仓库，权限独立 |
 | `CENTER_RELEASE` | 获准且与客户端兼容的完整服务器发行物 |
 
-将实际 `CENTER_ORIGIN` 用于 Portal 的 `--public-origin`、反向代理站点及身份回调配置；给接入端传 `--origin` 或设置 `CASCADE_CENTER_ORIGIN`。可视化复用同一实例的 `client.json`，本地 viewer 使用其任务 remote/namespace。项目名称、地址、账号和密钥不写入通用 skill。
+将实际 `CENTER_ORIGIN` 用于 Portal 的 `--public-origin`、反向代理站点及身份回调配置。网页复制的 `项目ID@中心地址` 取 `--public-origin`，它必须是用户实际访问的地址；接入端用单独的项目 ID 时，传 `--origin` 或设置 `CASCADE_CENTER_ORIGIN`。可视化复用同一实例的 `client.json`，本地 viewer 使用其任务 remote/namespace。项目名称、地址、账号和密钥不写入通用 skill。
 
 明确三种权限：
 

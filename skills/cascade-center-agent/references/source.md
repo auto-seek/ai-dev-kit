@@ -1,6 +1,6 @@
 # 来源与维护
 
-本 skill 是通用的 Cascade agent 接入包，`scripts/` 基于 CascadeCenter-web 已上线版本 `683080f68ee8e2ea19c5aa2b701ca0c4aa7379a9` 的客户端及其直接依赖。插件对 `cascade-node-join.cjs` 增加中心地址配置，移除默认站点，未改变服务端协议。此处仓库地址只记录代码来源，不用于选择接入项目或部署服务器。完整清单见 [source.json](source.json)。
+本 skill 是通用的 Cascade agent 接入包，`scripts/` 基于 CascadeCenter-web 已上线版本 `7b7d4d17928451c29b90b6b071c8ca0fd521b886` 的客户端及其直接依赖。插件只改了 `cascade-node-join.cjs` 的中心地址来源：移除默认站点，单独的项目 ID 依次使用 `--origin`、`CASCADE_CENTER_ORIGIN` 或同目录已保存的注册地址；复制的 `项目ID@中心地址`、`--harness` 和归属确认码与源版本一致，未改变服务端协议。此处仓库地址只记录代码来源，不用于选择接入项目或部署服务器。完整清单见 [source.json](source.json)。
 
 源仓库：AutoSeek 内部的 CascadeCenter-web，不公开；此处只记录提交号。
 

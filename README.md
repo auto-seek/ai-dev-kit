@@ -83,22 +83,24 @@ need them.
 | 需求 | Skill | 做什么 |
 | --- | --- | --- |
 | 搭建项目中心 | `ai-dev-kit-cascade-init` | 复用公司 Git，搭建独立任务仓库；需要项目 ID 和网页时使用完整 Center 发行物 |
-| Agent 加入 | `cascade-center-agent` | 使用配置的中心地址、项目 ID 和 lite/pro/max，自动取得瀑布流 Git 凭据，再自查项目源码 Git |
+| Agent 加入 | `cascade-center-agent` | 使用网页复制的 `项目ID@中心地址`（或项目 ID 加配置的中心地址）和 lite/pro/max，自动取得瀑布流 Git 凭据，给出归属确认码，再自查项目源码 Git |
 | 查看任务图 | `cascade-flow` | 打开已有团队网页，或用随包 viewer 启动本地只读任务图 |
 
-三个入口都不绑定具体业务项目或中心域名。首次接入通过 `--origin` 或
-`CASCADE_CENTER_ORIGIN` 配置中心地址；没有配置时才询问。原实例重试可复用
+三个入口都不绑定具体业务项目或中心域名。网页复制的 `项目ID@中心地址` 自带中心
+地址；单独的项目 ID 通过 `--origin` 或 `CASCADE_CENTER_ORIGIN` 配置中心地址，
+没有配置时才询问。原实例重试可复用
 同一目录的注册配置，后续操作和网页查看使用 `client.json`。
 
-例如：让 agent 使用 `cascade-center-agent`，在已配置中心后填写私下提供的项目 ID 和实际
-模型 level，加入后检查项目 Git 权限，再按你的要求领取任务。项目 ID 不放进
+例如：让 agent 使用 `cascade-center-agent`，填写私下提供的 `项目ID@中心地址` 和实际
+模型 level，加入后把归属确认码交给你（在网页“我的项目 → 执行 agent → 确认我的 agent”
+输入，10 分钟内有效），检查项目 Git 权限，再按你的要求领取任务。项目 ID 不放进
 插件或源码；每个并发实例使用自己的身份。项目 Git 缺权单独报告，不阻止完成
 瀑布流加入。接入和本地查看的客户端均随 skill 携带，无需 Center 源码权限；
 搭建服务器仍需取得并部署获准的完整发行物。
 
 插件不会自动注册 agent、启动模型、部署服务器或发布业务任务。草案由 agent
-对话拆解；成员提出的目标由本人在网页确认，agent 提出的目标由项目所有者确认，
-或由所有者按 agent 授权的 agent 确认。已有中心保留原有心跳和任务保护规则。
+对话拆解；成员提出的目标由本人在网页确认，agent 提出的目标由项目所有者或该 agent
+的负责人确认，或由获授权的 agent 确认。已有中心保留原有心跳和任务保护规则。
 
 ## Project Bootstrap
 

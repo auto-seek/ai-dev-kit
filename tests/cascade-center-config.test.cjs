@@ -134,4 +134,40 @@ test("packaged join CLI selects a configured center and preserves retry identity
     assert.deepEqual(await fs.readdir(directory), ["enrollment.json"]);
     assert.equal(a.requests.length + b.requests.length, 3);
   });
+  const copied = (directory, address, args = [], extra = {}) => run(process.execPath, [script,
+    "--project-id", address, "--level", "pro", "--directory", directory, ...args], extra);
+  await t.test("a copied ID@origin selects its center over the environment", async () => {
+    const directory = path.join(root, "copied-agent");
+    rejected(await copied(directory, `${projectId}@${b.origin}`, [], { CASCADE_CENTER_ORIGIN: a.origin }));
+    assert.equal(a.requests.length, 2);
+    assert.equal(b.requests.length, 2);
+    assert.equal(b.requests[1].body.projectId, projectId);
+    assert.equal(JSON.parse(await pending(directory)).origin, b.origin);
+  });
+  await t.test("a copied ID@origin resumes only the identity saved for that center", async () => {
+    const before = await pending(saved);
+    rejected(await copied(saved, `${projectId}@${a.origin}`));
+    assert.equal(a.requests.length, 3);
+    assert.deepEqual(a.requests[2], a.requests[0]);
+    const moved = await copied(saved, `${projectId}@${b.origin}`);
+    assert.equal(moved.code, 1);
+    assert.match(moved.stderr, /Resume requires the same project ID, level and center origin/);
+    assert.equal(await pending(saved), before);
+    assert.equal(b.requests.length, 2);
+  });
+  await t.test("a conflicting --origin or invalid --harness fails before creating an identity", async () => {
+    const cases = [
+      [["--origin", a.origin], /--origin differs from the center address/],
+      ...["Claude Code", "Codex", "c", "codex_cli", "x".repeat(33)].map(name =>
+        [["--harness", name], /--harness must be a lowercase name/]),
+    ];
+    for (const [index, [args, message]] of cases.entries()) {
+      const directory = path.join(root, `copied-invalid-${index}`);
+      const result = await copied(directory, `${projectId}@${b.origin}`, args);
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, message);
+      await assert.rejects(fs.stat(directory), { code: "ENOENT" });
+    }
+    assert.equal(a.requests.length + b.requests.length, 5);
+  });
 });

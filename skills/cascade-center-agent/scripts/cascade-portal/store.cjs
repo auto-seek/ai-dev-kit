@@ -16,6 +16,9 @@ const text = (value, name, max = 20000) => {
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const digest = value => createHash("sha256").update(canonical(value)).digest("hex");
+// An agent reports its own harness. It is display-only and never an authorization input.
+const HARNESS = /^[a-z][a-z0-9-]{1,31}$/;
+const HARNESS_LABELS = { codex: "Codex", claude: "Claude", antigravity: "Antigravity", gemini: "Gemini", cursor: "Cursor", opencode: "OpenCode" };
 function exact(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) fail(400, "请求字段无效");
 }
@@ -42,7 +45,7 @@ function createStore(filename) {
   const db = new DatabaseSync(filename, { timeout: 5000 });
   db.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
   const version = db.prepare("PRAGMA user_version").get().user_version;
-  if (![0, 1, 2, 3, 4].includes(version)) { db.close(); throw new Error("Unsupported portal database version"); }
+  if (![0, 1, 2, 3, 4, 5].includes(version)) { db.close(); throw new Error("Unsupported portal database version"); }
   if (!version) db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE requests (id TEXT PRIMARY KEY, author TEXT NOT NULL, description TEXT NOT NULL,
       state TEXT NOT NULL, version INTEGER NOT NULL, proposal TEXT, dispatch TEXT,
@@ -84,8 +87,27 @@ function createStore(filename) {
   };
   const collaboration = collaborationStore(db, { fail, text, exact, canonical, digest });
   const workflows = workflowStore(db, { fail, text, exact, canonical, digest }, collaboration);
+  if (db.prepare("PRAGMA user_version").get().user_version === 4) db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE agent_reports(agent_id TEXT PRIMARY KEY, harness TEXT NOT NULL, reported_at TEXT NOT NULL);
+    PRAGMA user_version=5; COMMIT;`);
+  const agents = {
+    report(agentId, input) {
+      exact(input, ["harness"]);
+      if (typeof input.harness !== "string" || !HARNESS.test(input.harness)) fail(400, "harness 须为小写名称，例如 codex、claude 或 antigravity");
+      db.prepare("INSERT INTO agent_reports VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET harness=excluded.harness,reported_at=excluded.reported_at").run(agentId, input.harness, now());
+      return { harness: input.harness };
+    },
+    // Adds the self-reported harness beside the registry's owner; agents that never reported keep null.
+    describe(list) {
+      const reports = new Map(db.prepare("SELECT agent_id,harness FROM agent_reports").all().map(r => [r.agent_id, r.harness]));
+      return list.map(a => {
+        const harness = reports.get(a.id);
+        return { id: a.id, tier: a.tier, owner: a.owner ?? null, harness: harness ? { id: harness, label: HARNESS_LABELS[harness] ?? harness } : null };
+      });
+    },
+  };
   return {
-    collaboration, workflows,
+    collaboration, workflows, agents,
     close() { db.close(); },
     getRequest, getCandidate,
     taskGroups() {
@@ -225,4 +247,4 @@ function createStore(filename) {
   };
 }
 
-module.exports = { createStore, PortalError, fail, text, exact, canonical, digest, validateProposal, dispatchContract };
+module.exports = { createStore, PortalError, fail, text, exact, canonical, digest, validateProposal, dispatchContract, HARNESS };

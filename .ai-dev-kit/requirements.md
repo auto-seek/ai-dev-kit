@@ -150,3 +150,10 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] Replace project-specific examples and live center URLs with generic configuration in setup, join and visualization instructions.
 - [x] Resolve join origin from explicit input, environment or the same private enrollment directory; reject missing/invalid origins and cross-center retries.
 - [x] Prepare the validated package, independent review and synchronized plugin version 0.16.1 for final release gates.
+
+## center-identity-client
+
+- [x] Package the CascadeCenter-web `7b7d4d1` client: `cascade-node-client.cjs`, `cascade-portal/store.cjs` and `cascade-portal/admission.cjs` byte-identical; the other six files unchanged and identical; `cascade-node-join.cjs` merged so it accepts `PROJECT_ID@CENTER_ORIGIN`, rejects a conflicting `--origin`, validates and reports `--harness`, prints the owner confirmation code, and still has no built-in center.
+- [x] `SKILL.md`, references, the slash template and README describe the copied address, the self-reported harness and owner confirmation (10-minute code entered under 我的项目 → 执行 agent → 确认我的 agent; `owner-code` for a new one).
+- [x] Join tests cover ID@origin over `CASCADE_CENTER_ORIGIN`, a conflicting `--origin`, a bare ID without a center, harness validation and resume; a real-SSH run against the Center fixtures passes with the packaged scripts.
+- [x] Version 0.18.0 in all three manifests with a CHANGELOG entry; `npm run build`, skill validation, gitleaks and an internal-address grep pass.

@@ -8,6 +8,27 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-19
+
+### Added
+- `cascade-center-agent`: join accepts the `PROJECT_ID@CENTER_ORIGIN` text that
+  the Center web page copies. The address after `@` selects the center and wins
+  over `CASCADE_CENTER_ORIGIN`; a different `--origin` is rejected before any key
+  is created.
+- `cascade-center-agent`: `--harness NAME` on join, and the client's
+  `profile --harness NAME`, report which tool runs the agent. Center shows it as
+  self-reported and never uses it for permissions.
+- `cascade-center-agent`: join prints a one-time owner confirmation code for an
+  agent that has no owner yet. It is valid for 10 minutes; a project member
+  enters it in Center under 我的项目 → 执行 agent → 确认我的 agent to become the
+  agent's owner. The client's `owner-code` command issues a new code.
+
+### Changed
+- The bundled Center clients now come from CascadeCenter-web `7b7d4d1`
+  (previously `683080f`). A bare project ID still needs `--origin`,
+  `CASCADE_CENTER_ORIGIN` or the saved enrollment; the kit has no built-in
+  center address.
+
 ## [0.17.2] - 2026-10-15
 
 ### Changed
