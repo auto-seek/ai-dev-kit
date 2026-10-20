@@ -56,12 +56,13 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
     });
     const stdout = [], stderr = [];
     let bytes = 0, outputOverflow = false, closed = false, exitCode = 1, cancelled = null;
-    let cleanupFinished = false, killTimer, startError;
+    let cleanupFinished = false, killTimer, releaseTimer, startError;
     const signals = { SIGINT: 130, SIGTERM: 143 };
     const handlers = {};
     const cleanup = () => {
       clearTimeout(deadline);
       clearTimeout(killTimer);
+      clearTimeout(releaseTimer);
       for (const [signal, handler] of Object.entries(handlers)) process.removeListener(signal, handler);
     };
     const finish = () => {
@@ -97,6 +98,13 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
       killTimer = setTimeout(() => {
         signalGroup("SIGKILL");
         cleanupFinished = true;
+        // An SSH ControlPersist master runs outside this group. It keeps the
+        // stderr passed by a killed multiplex client until the remote command
+        // ends, so stop waiting for EOF once the group itself is gone.
+        releaseTimer = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, 2000);
         finish();
       }, 2000);
     };

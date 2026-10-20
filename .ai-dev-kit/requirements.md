@@ -157,3 +157,9 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `SKILL.md`, references, the slash template and README describe the copied address, the self-reported harness and owner confirmation (10-minute code entered under 我的项目 → 执行 agent → 确认我的 agent; `owner-code` for a new one).
 - [x] Join tests cover ID@origin over `CASCADE_CENTER_ORIGIN`, a conflicting `--origin`, a bare ID without a center, harness validation and resume; a real-SSH run against the Center fixtures passes with the packaged scripts.
 - [x] Version 0.18.0 in all three manifests with a CHANGELOG entry; `npm run build`, skill validation, gitleaks and an internal-address grep pass.
+
+## center-ssh-reuse
+
+- [x] Package the CascadeCenter-web `33b9ec0` client: `cascade-node-client.cjs` and `cascade-process.cjs` byte-identical; `cascade-node-join.cjs` three-way merged so it gains SSH connection reuse and the agent-directory length check while keeping the kit's no-built-in-center rule; the other seven files unchanged and identical.
+- [x] `SKILL.md` describes connection reuse, the directory length limit and how an existing agent re-runs join to get the new config; source records name `33b9ec0`.
+- [x] Version 0.18.1 in all three manifests with a CHANGELOG entry; `npm run build`, skill validation, the Center client tests, gitleaks and an internal-address grep pass.

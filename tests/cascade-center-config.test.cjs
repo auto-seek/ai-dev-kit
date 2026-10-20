@@ -17,7 +17,9 @@ const script = path.join(skill, "scripts/cascade-node-join.cjs");
 const projectId = "project_0123456789abcdefghijklmnopqrstuv";
 
 test("packaged join CLI selects a configured center and preserves retry identity", async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-center-config-"));
+  // Agent directories live under this root, and join caps them at 76 bytes on
+  // macOS for the SSH control socket; macOS's per-user tmpdir already takes 49.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cc-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const env = {
     PATH: process.env.PATH, HOME: root, TMPDIR: root, LANG: "C.UTF-8",
@@ -83,6 +85,15 @@ test("packaged join CLI selects a configured center and preserves retry identity
       script, directory, projectId]);
     assert.equal(result.code, 1);
     assert.match(result.stderr, /Center address is required/);
+    await assert.rejects(fs.stat(directory), { code: "ENOENT" });
+    assert.equal(a.requests.length + b.requests.length, 0);
+  });
+
+  await t.test("an agent directory too long for the SSH control socket fails before creating an identity", async () => {
+    const directory = path.join(root, "d".repeat(90));
+    const result = await join(directory, ["--origin", a.origin]);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Agent directory is too long for its SSH control socket/);
     await assert.rejects(fs.stat(directory), { code: "ENOENT" });
     assert.equal(a.requests.length + b.requests.length, 0);
   });

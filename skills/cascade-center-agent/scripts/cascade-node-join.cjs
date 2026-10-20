@@ -12,6 +12,13 @@ const { publicKey } = require("./cascade-portal/admission.cjs");
 const { HARNESS } = require("./cascade-portal/store.cjs");
 const { runProcess, redact } = require("./cascade-process.cjs");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+// The control socket is <directory>/mux/<port>. ssh(1) first binds it with a
+// ".<16 random characters>" suffix; that path and its NUL terminator must fit
+// sockaddr_un.sun_path (104 bytes on macOS/BSD, 108 on Linux).
+const MAX_DIRECTORY_BYTES =
+  (process.platform === "linux" ? 108 : 104) -
+  "/mux/65535.0123456789abcdef".length -
+  1;
 
 async function run(command, args, env) {
   const result = await runProcess(command, args, {
@@ -21,6 +28,16 @@ async function run(command, args, env) {
   if (result.code !== 0)
     throw new Error(`Setup command failed (${result.code}): ${result.stderr}`);
   return result.stdout.trim();
+}
+async function privateDirectory(directory) {
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const stat = await fs.lstat(directory);
+  return (
+    stat.isDirectory() &&
+    !stat.isSymbolicLink() &&
+    stat.uid === process.getuid() &&
+    !(stat.mode & 0o077)
+  );
 }
 async function privateFile(filename) {
   const stat = await fs.lstat(filename);
@@ -120,18 +137,17 @@ async function join({ projectId, level, origin, directory, harness }) {
     url.password
   )
     throw new Error("An exact HTTPS center origin is required");
+  // A 64-bit name keeps the default SSH control socket path short for long home directories.
   directory = path.resolve(
-    directory || path.join(os.homedir(), ".cascade/agents", randomUUID()),
+    directory ||
+      path.join(os.homedir(), ".cascade/agents", randomBytes(8).toString("hex")),
   );
-  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-  const stat = await fs.lstat(directory);
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    stat.uid !== process.getuid() ||
-    stat.mode & 0o077 ||
-    /[\r\n\0]/.test(directory)
-  )
+  // Checked before key generation so a shorter directory can be chosen without registering an agent.
+  if (Buffer.byteLength(directory) > MAX_DIRECTORY_BYTES)
+    throw new Error(
+      `Agent directory is too long for its SSH control socket: use a --directory of at most ${MAX_DIRECTORY_BYTES} bytes`,
+    );
+  if (/[\r\n\0]/.test(directory) || !(await privateDirectory(directory)))
     throw new Error("Agent directory must be private");
   const pendingFile = path.join(directory, "enrollment.json"),
     tokenFile = path.join(directory, "token"),
@@ -234,11 +250,24 @@ async function join({ projectId, level, origin, directory, harness }) {
         ? `[${remote.hostname}]:${remote.port}`
         : remote.hostname;
     await fs.writeFile(hosts, `${host} ${enrolled.hostKey}\n`, { mode: 0o600 });
-    const sshPath = (value) =>
-      '"' + value.replaceAll("\\", "\\\\").replaceAll('"', '\\"') + '"';
+    const mux = path.join(directory, "mux");
+    if (!(await privateDirectory(mux)))
+      throw new Error("SSH control socket directory must be private");
+    // ssh_config expands % tokens in these paths, so a literal % is doubled.
+    const sshPath = (value, token = "") =>
+      '"' +
+      value
+        .replaceAll("\\", "\\\\")
+        .replaceAll('"', '\\"')
+        .replaceAll("%", "%%") +
+      token +
+      '"';
+    // Multiplexing is limited to the enrolled user and host; %p separates ports.
+    // ControlPersist covers the Git round trips of one operation and nearby
+    // commands, then closes the idle connection after 60 seconds.
     await fs.writeFile(
       sshConfig,
-      `Host *\n  IdentityFile ${sshPath(key)}\n  IdentitiesOnly yes\n  IdentityAgent none\n  UserKnownHostsFile ${sshPath(hosts)}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  BatchMode yes\n  ConnectTimeout 10\n  ServerAliveInterval 15\n  ServerAliveCountMax 2\n  ClearAllForwardings yes\n  RequestTTY no\n`,
+      `Match host ${remote.hostname} user ${remote.username}\n  ControlMaster auto\n  ControlPersist 60\n  ControlPath ${sshPath(mux, "/%p")}\nHost *\n  IdentityFile ${sshPath(key)}\n  IdentitiesOnly yes\n  IdentityAgent none\n  UserKnownHostsFile ${sshPath(hosts)}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  BatchMode yes\n  ConnectTimeout 10\n  ServerAliveInterval 15\n  ServerAliveCountMax 2\n  ClearAllForwardings yes\n  RequestTTY no\n`,
       { mode: 0o600 },
     );
     const config = {

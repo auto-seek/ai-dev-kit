@@ -17,20 +17,21 @@ function verifySource(config, source) {
   if (!path.isAbsolute(config.cascadePython || "") || !path.isAbsolute(config.cacheDir || "")) throw new Error("A pinned Python and private absolute Git cache are required");
   if (source.namespace !== config.namespace || source.remoteSha256 !== digest(config.remote)) throw new Error("Client and portal refer to different coordination repositories");
 }
+async function gitEnvironment(config) {
+  if (!config.sshConfig) return process.env;
+  if (!path.isAbsolute(config.sshConfig) || /[\r\n\0]/.test(config.sshConfig)) throw new Error("Invalid agent SSH configuration path");
+  const stat = await fs.lstat(config.sshConfig);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid() || stat.mode & 0o077) throw new Error("Agent SSH configuration must be private");
+  const quoted = "'" + config.sshConfig.replaceAll("'", "'\\''") + "'";
+  return {...process.env,GIT_SSH_COMMAND:`ssh -F ${quoted}`};
+}
 async function native(config, request) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-node-"));
   let value;
   try {
     const filename = path.join(temp, "request.json");
     await fs.writeFile(filename, JSON.stringify(request), { mode: 0o600 });
-    let env = process.env;
-    if (config.sshConfig) {
-      if (!path.isAbsolute(config.sshConfig) || /[\r\n\0]/.test(config.sshConfig)) throw new Error("Invalid agent SSH configuration path");
-      const stat = await fs.lstat(config.sshConfig);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid() || stat.mode & 0o077) throw new Error("Agent SSH configuration must be private");
-      const quoted = "'" + config.sshConfig.replaceAll("'", "'\\''") + "'";
-      env = {...env,GIT_SSH_COMMAND:`ssh -F ${quoted}`};
-    }
+    const env = await gitEnvironment(config);
     const result = await runProcess(config.cascadePython, [path.join(__dirname, "cascade-node-native.py"),
       "--remote", config.remote, "--namespace", config.namespace, "--cache-dir", config.cacheDir, "--request-file", filename], { timeoutSeconds: 180, env });
     if (result.code !== 0 && result.code !== 2) throw new Error(`Native operation failed (${result.code}): ${result.stderr || result.stdout}. Inspect the remote state before retrying.`);
@@ -150,5 +151,5 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (result.success === false) process.exitCode = 2;
 }
-module.exports = { createNodeClient, native, centerRoute, verifySource };
+module.exports = { createNodeClient, native, gitEnvironment, centerRoute, verifySource };
 if (require.main === module) main().catch(error => { console.error(`cascade-node-client: ${redact(error.message, true)}`); process.exitCode = 1; });

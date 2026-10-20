@@ -8,6 +8,29 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-20
+
+### Changed
+- `cascade-center-agent`: the `ssh_config` that join writes reuses one SSH
+  connection for the center's Git host (`ControlMaster auto`,
+  `ControlPersist 60`, control socket under the agent directory's `mux/`).
+  A claim or renewal now authenticates once instead of once per Git command.
+  Agents that joined with an earlier version get it by re-running join with
+  their original inputs in the same directory; the old config keeps working
+  without reuse.
+- `cascade-center-agent`: join refuses an agent directory longer than 76 bytes
+  on macOS or 80 bytes on Linux, before any key is created, because the control
+  socket path has a length limit. The default directory name is shorter.
+- The bundled Center clients now come from CascadeCenter-web `33b9ec0`
+  (previously `7b7d4d1`). `cascade-node-client.cjs` and `cascade-process.cjs`
+  are byte-identical; `cascade-node-join.cjs` keeps the kit's own rule that a
+  bare project ID needs a configured center.
+
+### Fixed
+- `cascade-center-agent`: a timed-out command no longer waits minutes past its
+  deadline when an SSH connection master keeps its stderr open; the command
+  returns about 2 seconds after it is force-killed.
+
 ## [0.18.0] - 2026-10-19
 
 ### Added

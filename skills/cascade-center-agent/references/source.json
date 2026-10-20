@@ -1,6 +1,6 @@
 {
   "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
-  "sourceCommit": "7b7d4d17928451c29b90b6b071c8ca0fd521b886",
+  "sourceCommit": "33b9ec0547ea1a360f5ed25208d13a7f8ae9f11a",
   "files": [
     "scripts/cascade-node-client.cjs",
     "scripts/cascade-node-join.cjs",
@@ -14,7 +14,7 @@
     "scripts/cascade-process.cjs"
   ],
   "runtime": "0.8.2+nodecollab.1",
-  "packagedAt": "2026-10-19",
+  "packagedAt": "2026-10-20",
   "localModifications": {
     "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source."
   }
