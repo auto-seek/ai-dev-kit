@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-22
+
 ### Fixed
 - `resource-lock.cjs` pools: `release` could delete the slot file of the next
   holder when its own ticket was reclaimed while it removed its container (an
