@@ -8,6 +8,25 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-22
+
+### Added
+- `templates/workstation/`: a Linux GUI workstation container, so an agent can
+  run, drive and screenshot a windowed program on a private virtual screen
+  instead of the host's display. `base/` is a pinned Debian image with Xvfb,
+  XTEST input and screenshots: `ws-run` runs one command (batch) or keeps the
+  screen up for `docker exec` steps (session), stops the command's whole
+  process group on exit or `--timeout`, and records exit code, timeout, time,
+  container memory peak, OOM kills and CPU seconds in `ws-run.json`;
+  `ws-input` injects keys and clicks into the container's own X server;
+  `ws-shot` saves the screen or one window as PNG. `examples/godot-dotnet/`
+  layers Godot 4.7.1 .NET and the .NET 8 SDK on Mesa software rendering
+  (lavapipe for Forward+, llvmpipe for OpenGL), with archives checked against
+  official SHA512 sums. Pool semantics on top of `resource-lock.cjs` follow in
+  a later release.
+- `npm run test:workstation`: the workstation entry contract against real
+  containers (needs Docker and `WORKSTATION_IMAGE`; not part of `npm run build`).
+
 ## [0.18.1] - 2026-10-20
 
 ### Changed
