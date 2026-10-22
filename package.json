@@ -1,6 +1,6 @@
 {
   "name": "ai-dev-kit",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Skill-first AI development workflow kit for agent harnesses",
   "license": "MIT",
   "repository": {

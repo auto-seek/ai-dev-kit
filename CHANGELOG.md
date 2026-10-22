@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-22
+
 ### Fixed
 - `resource-lock.cjs` pools: a slot-mutex marker left by a process that died
   could block every claim and release until their mutex wait ran out, if the
