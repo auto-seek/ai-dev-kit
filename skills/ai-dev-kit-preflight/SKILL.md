@@ -42,7 +42,8 @@ receipt was written, so retry later instead of treating it as a verification
 failure. Topic-specific test selection belongs in the task's own committed
 `preflight.task_args` file and requirements in its `task-files` file, not in the
 shared contract or ledger. `--phase status [--all] [--json]` reports, read-only,
-which receipts are missing or stale and why. Under `receipt_binding: merge-base`
+which receipts are missing or stale and why, and which locks and workstations
+are held on this machine. Under `receipt_binding: merge-base`
 target movement does not stale this receipt; a single integrator runs
 `--phase integrate` before merge.
 

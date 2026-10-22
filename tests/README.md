@@ -118,7 +118,23 @@ No Cascade executable or test-framework plugin is needed for this suite.
   XTEST input: exit-code passthrough and `ws-run.json`, timeout stopping the whole
   command group, no surviving background children, injected keys and clicks
   reaching the focused window, OOM kills not reported as timeouts, usage errors.
-  Needs Docker and a base image named by `WORKSTATION_IMAGE`; fails without them.
+  Pool cases claim real containers through `resource-lock.cjs`: declared CPU,
+  memory, swap and user limits, a new container per claim with nothing left from
+  the previous holder, removal on release and after the owner is killed,
+  `run --pool` exit codes and evidence, and refusal of a pool needing more memory
+  than Docker has. Needs Docker and a base image named by `WORKSTATION_IMAGE`;
+  fails without them.
+- **`workstation-pool.test.cjs`** (in `test:team`) — real CLI processes against
+  workstation pools in `scripts/resource-lock.cjs`, with `fake-docker.cjs` standing
+  in for the Docker CLI only: a burst of nine runs on three workstations never
+  shares one, simultaneous claims hand out each slot once and the rest exit 75,
+  only the first waiter in line assigns and a live holder's workstation is never
+  freed (both checked by planted tickets), only the holder's token releases,
+  killed holders and expired leases are reclaimed with a printed, logged reason
+  while `renew` keeps a lease, an orphaned `run` keeps its slot until its command
+  ends, the same-named exclusive lock stays independent, status and the gate's
+  `--phase status` show holders, hold and wait times and the long-hold reminder,
+  and configuration errors (including memory beyond Docker's) exit 2.
 
 ## Coverage
 

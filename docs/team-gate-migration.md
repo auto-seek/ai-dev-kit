@@ -276,7 +276,10 @@ branches checked out in some worktree get the full report from that checkout;
 branches without a checkout are compared only by branch HEAD, merge base and
 target binding and reported as `unverified` when those still match. `--json`
 prints the same report as one JSON document. Coordination state and design
-bindings are not queried; `--phase merge` remains the authority.
+bindings are not queried; `--phase merge` remains the authority. Status also
+lists the project's exclusive locks and workstation pools on this machine
+(holders, hold times, waiters and how long they waited, long-hold reminders)
+without changing them or querying Docker; nothing is reported to the center.
 
 The environment self-check runs in status and immediately before preflight and
 integrate run the project command: node must be on `PATH`, and the volume

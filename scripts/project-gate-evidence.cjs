@@ -6,6 +6,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync, spawn, spawnSync } = require("node:child_process");
 const { stateRoot } = require("./project-state.cjs");
+const resources = require("./resource-lock.cjs");
 
 const contractPath = ".ai-dev-kit/gate-contract.json";
 const workflowPath = ".ai-dev-kit/workflow";
@@ -670,13 +671,14 @@ function renderStatus(report) {
     if (item.note) lines.push(`  note: ${item.note}`);
     lines.push(`  merge readiness: ${item.merge_ready === null ? "unknown" : item.merge_ready ? "ready" : `not ready — ${item.problems.join("; ")}`}`);
   }
+  if (report.resources) lines.push(...resources.renderOverview(report.resources));
   lines.push("note: coordination state and design bindings are checked only by --phase merge");
   return lines.join("\n");
 }
 // Read-only: never revokes or writes receipts, logs or locks.
 function status(project, override, options) {
   const shared = stateRoot(project);
-  const report = { environment: null, blocking_findings: 0, branches: [] };
+  const report = { environment: null, blocking_findings: 0, branches: [], resources: null };
   try { report.environment = environment(shared); }
   catch (error) { report.environment = { problem: error.message }; }
   try { report.blocking_findings = blockingFindings(shared); }
@@ -700,6 +702,8 @@ function status(project, override, options) {
       report.branches.push(checkout ? checkoutStatus(checkout, name, override, shared, findings) : refStatus(shared, name));
     }
   }
+  // Locks and workstation pools on this machine; not reported to the center.
+  try { report.resources = resources.overview(shared); } catch (error) { report.resources = { error: error.message }; }
   console.log(options["--json"] ? JSON.stringify(report, null, 2) : renderStatus(report));
 }
 async function runProject(project, config, file) {

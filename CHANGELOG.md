@@ -8,6 +8,27 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Added
+- `scripts/resource-lock.cjs` workstation pools: projects declare Docker
+  workstations in `.ai-dev-kit/workstations.json` (image or Dockerfile, count,
+  CPUs, memory, screen, start command) and agents `claim`, `run`, `renew` and
+  `release` them with `--pool`. At most the declared number are held and none
+  twice; each claim gets a new container, release and reclaim remove it; only
+  the claim's token releases it; a dead owner or an expired lease is reclaimed
+  with a printed and logged reason. A pool that needs more memory than Docker
+  can use is refused with the numbers. The defaults (3 × 3 CPUs / 2.5 GB) fit an
+  8 GB Docker VM. Exclusive locks such as the real-screen `godot` lock are
+  unchanged and independent of pools.
+- `resource-lock.cjs status --pool <pool>` shows each workstation's holder, hold
+  time, lease, waiters and their wait, a configurable long-hold reminder, recent
+  reclaims and Docker's memory fit; `status` without a name lists every lock and
+  pool of the project.
+
+### Changed
+- `skill-first-gate.sh --phase status` also lists the project's locks and
+  workstation pools on this machine. It stays read-only and reports nothing to
+  the center.
+
 ## [0.19.0] - 2026-10-22
 
 ### Added

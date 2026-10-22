@@ -4,6 +4,8 @@
 // and records it in ws-run.json; a timeout or exit stops the command's whole
 // process group; an OOM kill is not reported as a timeout; ws-input and
 // ws-shot act on that private screen only.
+// Pools: scripts/resource-lock.cjs claims, runs, reclaims and releases real
+// containers of this image with the declared limits.
 // Goal: keep the workstation entry contract that pool semantics build on honest.
 // Migration: needs Docker and a base image built from
 // templates/workstation/base, named by WORKSTATION_IMAGE; missing prerequisites
@@ -14,7 +16,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const image = process.env.WORKSTATION_IMAGE;
 assert.ok(image, "Set WORKSTATION_IMAGE to an image built from templates/workstation/base (see templates/workstation/README.md).");
@@ -139,4 +141,80 @@ test("usage errors exit 2 without running anything", t => {
   assert.equal(fs.existsSync(path.join(out, "ws-run.json")), false);
   assert.equal(docker(["run", "--rm", "--entrypoint", "ws-shot", image]).status, 2);
   assert.equal(docker(["run", "--rm", "--entrypoint", "ws-input", image, "click", "x", "1"]).status, 2);
+});
+
+const lock = path.resolve(__dirname, "../scripts/resource-lock.cjs");
+
+function pool(t, settings = {}) {
+  const root = outDir(t);
+  fs.mkdirSync(path.join(root, ".ai-dev-kit"));
+  fs.writeFileSync(path.join(root, ".ai-dev-kit", "workstations.json"), JSON.stringify({
+    schema_version: 1,
+    pools: { ws: { image, start: ["bash", "-c"], slots: 2, cpus: 1, memory: "256m", screen: "640x480x24", ...settings } },
+  }));
+  const cli = (command, rest) => {
+    const result = spawnSync(process.execPath, [lock, command, "--root", root, ...rest], { cwd: root, encoding: "utf8", timeout: 120000 });
+    return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+  const claim = rest => {
+    const result = cli("claim", ["--pool", "ws", ...rest]);
+    assert.equal(result.code, 0, result.stderr);
+    const fields = Object.fromEntries(result.stdout.trim().split("\n").map(line => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+    t.after(() => docker(["rm", "-f", fields.workstation]));
+    return fields;
+  };
+  return { root, cli, claim };
+}
+
+const exists = name => docker(["inspect", name]).status === 0;
+
+test("a claimed workstation is a new container with the pool's limits, and release removes it", t => {
+  const p = pool(t);
+  const first = p.claim(["--label", "limits"]);
+  const inspect = docker(["inspect", first.workstation, "--format",
+    '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.Config.User}} {{index .Config.Labels "ai-dev-kit.workstation.slot"}}']);
+  assert.equal(inspect.stdout.trim(), `1000000000 268435456 268435456 ${user} ${first.slot}`);
+  const dirty = docker(["exec", first.workstation, "ws-run", "--", "bash", "-c",
+    'xdpyinfo | grep -q "640x480 pixels" && test -w /ws/out && touch /tmp/left-behind']);
+  assert.equal(dirty.status, 0, dirty.stderr);
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", first.token]).code, 0);
+  assert.equal(exists(first.workstation), false, "release removes the container");
+  const next = p.claim(["--label", "clean"]);
+  assert.notEqual(next.workstation, first.workstation);
+  assert.equal(docker(["exec", next.workstation, "test", "!", "-e", "/tmp/left-behind"]).status, 0, "the next holder starts clean");
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", next.token]).code, 0);
+});
+
+test("a killed owner's workstation is removed and the slot is handed on", async t => {
+  const p = pool(t, { slots: 1 });
+  const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const gone = new Promise(resolve => owner.on("exit", resolve));
+  const victim = p.claim(["--owner-pid", String(owner.pid), "--label", "victim"]);
+  owner.kill("SIGKILL");
+  await gone;
+  const next = p.claim(["--wait", "30", "--label", "next"]);
+  assert.equal(next.slot, "0");
+  assert.equal(exists(victim.workstation), false);
+  assert.equal(exists(next.workstation), true);
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", victim.token]).code, 1);
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", next.token]).code, 0);
+});
+
+test("run --pool runs the start command on a workstation and removes it afterwards", t => {
+  const p = pool(t);
+  const ok = p.cli("run", ["--pool", "ws", "--", 'xdpyinfo | grep -q "640x480 pixels" && echo ran > /ws/out/ran']);
+  assert.equal(ok.code, 0, ok.stderr);
+  const outs = path.join(p.root, ".ai-dev-kit", "pools", "ws", "out");
+  assert.deepEqual(fs.readdirSync(outs).map(token => fs.readFileSync(path.join(outs, token, "ran"), "utf8")), ["ran\n"]);
+  assert.equal(p.cli("run", ["--pool", "ws", "--", "exit 3"]).code, 3);
+  const id = docker(["ps", "-a", "--filter", "label=ai-dev-kit.workstation", "--format", "{{.Names}}"]).stdout;
+  assert.doesNotMatch(id, /-ws-\d-/, "no workstation of this pool is left behind");
+});
+
+test("a pool needing more memory than Docker has is refused before anything starts", t => {
+  const total = Number(docker(["info", "--format", "{{.MemTotal}}"]).stdout.trim());
+  const p = pool(t, { slots: 2, memory: String(total) });
+  const result = p.cli("claim", ["--pool", "ws", "--wait", "0"]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /more than the [\d.]+ GiB Docker can use; lower slots or memory in .*workstations\.json, or give Docker more memory/);
 });

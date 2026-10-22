@@ -87,23 +87,30 @@ does not update the `Window` node unless the window also moves, while setting
 
 ## Claiming a workstation
 
-A pool starts one container per claim:
+Projects declare a pool of workstations in `.ai-dev-kit/workstations.json` and
+claim them through `scripts/resource-lock.cjs` (`claim`, `run`, `renew`,
+`release` and `status` with `--pool`); see "Workstation Pools" in
+`skills/ai-dev-kit/references/loop-workflow.md`. Each claim starts one session
+container, the equivalent of:
 
 ```bash
-docker run -d --name <pool>-<slot> --label ai-dev-kit.workstation=<pool> \
+docker run -d --name aidk-ws-<project>-<pool>-<slot>-<id> --label ai-dev-kit.workstation=<project>/<pool> \
   --user "$(id -u):$(id -g)" --cpus 3 --memory 2.5g --memory-swap 2.5g -e LP_NUM_THREADS=3 \
   -v "$WORKTREE:$WORKTREE" -w "$WORKTREE" -v "$EVIDENCE:/ws/out" \
-  <image> --screen 3840x2160x24                    # session
-docker exec <pool>-<slot> ws-run --timeout 1800 -- <project start command>
-docker rm -f <pool>-<slot>                         # release
+  <image> --screen 3840x2160x24
+docker exec <container> ws-run --timeout 1800 -- <start command> <args>
 ```
 
-- Mount the worktree at its host path so build outputs that record absolute
-  paths stay valid on both sides. Mount nothing that exposes a host display.
-- Match `LP_NUM_THREADS` to `--cpus`; Mesa's software rasterizers otherwise
+and release or reclaim runs `docker rm -f <container>`, so the next holder gets
+a new container.
+
+- The worktree is mounted at its host path so build outputs that record
+  absolute paths stay valid on both sides. Nothing that exposes a host display
+  is mounted.
+- `LP_NUM_THREADS` follows `--cpus`; Mesa's software rasterizers otherwise
   start one thread per VM CPU in every container.
-- Set `--memory-swap` equal to `--memory` so a runaway run is killed and
-  reported instead of swapping the shared VM.
+- `--memory-swap` equals `--memory`, so a runaway run is killed and reported
+  instead of swapping the shared VM.
 
 ## Godot example
 

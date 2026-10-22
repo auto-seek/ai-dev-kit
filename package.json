@@ -29,7 +29,7 @@
     "test": "npm run test:review && npm run test:team && bash tests/run-gate-tests.sh",
     "test:fast": "npm run test:review && npm run test:team && FAST=1 bash tests/run-gate-tests.sh",
     "test:review": "node --test tests/test-review-scope.test.cjs",
-    "test:team": "node --test tests/cascade-center-config.test.cjs tests/cascade-process.test.cjs tests/team-gate-contract.test.cjs tests/gate-process-boundary.test.cjs tests/cascade-flow.test.cjs tests/cascade-portal.test.cjs tests/resource-lock.test.cjs",
+    "test:team": "node --test tests/cascade-center-config.test.cjs tests/cascade-process.test.cjs tests/team-gate-contract.test.cjs tests/gate-process-boundary.test.cjs tests/cascade-flow.test.cjs tests/cascade-portal.test.cjs tests/resource-lock.test.cjs tests/workstation-pool.test.cjs",
     "test:portal-integration": "node --test tests/cascade-portal-publish.test.cjs tests/cascade-portal-client.test.cjs",
     "center": "node scripts/cascade-portal.cjs",
     "test:flow": "node --test tests/cascade-flow.test.cjs",

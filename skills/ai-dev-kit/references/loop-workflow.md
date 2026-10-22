@@ -394,6 +394,83 @@ node "<kit>/scripts/resource-lock.cjs" run --name godot --label "feature/<slug> 
   constrained, so checks such as "no leftover engine process" stay inside the
   guarded command.
 
+### Workstation Pools
+
+A GUI check that can run on a private virtual screen (a Linux workstation
+container, see the kit's `templates/workstation/README.md`) does not need the
+host screen. Declare a pool of interchangeable workstations so agents run such
+checks in parallel; keep the exclusive lock (for example `--name godot`) for work
+that needs the host screen. Pools and locks are independent, even with the same
+name.
+
+Declare pools in the tracked `.ai-dev-kit/workstations.json`, read from the main
+checkout (relative paths resolve against the project root):
+
+```json
+{
+  "schema_version": 1,
+  "warn_hold_seconds": 1800,
+  "pools": {
+    "godot": {
+      "image": "example/workstation-godot:1",
+      "build": { "dockerfile": "tools/workstation/Dockerfile" },
+      "slots": 3, "cpus": 3, "memory": "2.5g", "screen": "3840x2160x24",
+      "mounts": [{ "source": "~/.nuget/packages", "target": "/nuget-fallback", "readonly": true }],
+      "env": { "NUGET_FALLBACK_PACKAGES": "/nuget-fallback" },
+      "start": ["godot", "--path", "Game", "--audio-driver", "Dummy",
+                "--rendering-method", "forward_plus", "--rendering-driver", "vulkan", "--"],
+      "timeout_seconds": 1800, "max_hold_seconds": 3600
+    }
+  }
+}
+```
+
+- `image` is required; `build` builds it when it is missing (bump the tag when
+  the Dockerfile changes). `start` is the argv every run begins with. Defaults are
+  3 slots of 3 CPUs and 2.5g each (three 4K Godot runs fit an 8 GB Docker VM),
+  `screen` 1920x1080x24, `user` `"host"` (run as your uid), `timeout_seconds`
+  1800, `max_hold_seconds` 3600, `warn_hold_seconds` 1800.
+- A claim exits 2 with the numbers when slots × memory over all pools exceeds the
+  memory Docker can use, or `cpus` exceeds Docker's CPUs; other configuration
+  errors also exit 2 and name the setting.
+
+```bash
+# One run: claim, run start + args on the workstation's screen, release.
+node "<kit>/scripts/resource-lock.cjs" run --pool godot --wait 1800 -- --panels /ws/out/panels
+
+# Several steps (screenshots, injected input): claim, use, release.
+out=$(node "<kit>/scripts/resource-lock.cjs" claim --pool godot --owner-pid $$ --label "feature/<slug>") || exit $?
+token=$(printf '%s\n' "$out" | sed -n 's/^token=//p')
+ws=$(printf '%s\n' "$out" | sed -n 's/^workstation=//p')
+docker exec "$ws" ws-run --timeout 1800 -- <start...> <args...>
+docker exec "$ws" ws-shot /ws/out/now.png
+node "<kit>/scripts/resource-lock.cjs" release --pool godot --token "$token"
+```
+
+- `claim` prints `token`, `slot`, `workstation` (the container), `out` (the
+  evidence directory mounted at `/ws/out`) and ready `exec`, `renew` and `release`
+  commands (`--json` for one JSON object). The worktree is mounted at its own
+  path and is the working directory.
+- Queueing is the lock's: first come, first served, `--wait` then exit 75 without
+  a ticket. Holders do not block waiters; at most `slots` are held.
+- Only the claim's token renews or releases it. Status never prints tokens, and
+  an old token cannot release the workstation that was handed on.
+- Every claim starts a new container from the image; release and reclaim remove
+  it. Nothing from an earlier holder survives.
+- Reclaim: a claim whose `--owner-pid` is gone, or a `run` whose runner is gone
+  once its `docker exec` has ended, is reclaimed at the next claim. So is a claim
+  not renewed within its lease (`--max-hold`, default `max_hold_seconds`), even if
+  its owner still runs: that reclaim is printed, logged in the pool's
+  `reclaimed.jsonl` and shown by status, and the late holder's `renew`/`release`
+  says it was reclaimed. Agents whose shell ends between tool calls claim without
+  `--owner-pid` and call `renew` within the lease.
+- `status --pool <pool> [--json]` lists each workstation's holder, hold time and
+  remaining lease, waiters and how long they have waited, a reminder when a hold
+  exceeds `warn_hold_seconds` (`--warn-hold <s>` overrides), recent reclaims, and
+  Docker's memory fit and containers that no slot holds. `status` without
+  `--name`/`--pool`, and `skill-first-gate.sh --phase status`, list every lock and
+  pool of the project on this machine. Nothing is reported to the center.
+
 ### Exit 75 means BLOCKED (retryable)
 
 Exit code 75 (`EX_TEMPFAIL`) means the work did not run because a shared
@@ -424,7 +501,8 @@ Checklist before running dozens of agents against one repository:
   candidate at a time, rerunning the merge gate on the updated base. Workers
   deliver branches; they do not merge.
 - **Queued exclusive resources.** Every scarce resource goes through
-  `resource-lock.cjs`; 75 means retry later, not failure.
+  `resource-lock.cjs`; 75 means retry later, not failure. Move GUI checks that do
+  not need the host screen to a workstation pool so they run in parallel.
 - **Read-only roles do not need worktrees.** Reviewers, researchers and status
   checkers read an existing checkout (or `git show <ref>:<path>`); only editing
   workers get a worktree.
