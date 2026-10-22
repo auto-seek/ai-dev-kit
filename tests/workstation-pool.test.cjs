@@ -504,3 +504,45 @@ test("a checkout lacking what the pool requires is refused with the host-side pr
   f.writeConfig({ requires: ["../outside"] });
   assert.match(f.cli("claim", ["--pool", "ws"]).stderr, /requires must list paths inside the checkout/);
 });
+
+test("slot-mutex markers of reused pids or past the backstop age are removed; a live holder's marker is honored", async t => {
+  const f = fixture(t, { slots: 1 });
+  const dir = path.join(f.root, ".ai-dev-kit", "pools", "ws");
+  fs.mkdirSync(dir, { recursive: true });
+  const start = spawnSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).stdout.trim();
+  assert.ok(start, "ps reports this process's start time");
+  // Markers owned by this live test process, as a holder inside the mutex would leave them.
+  const marker = (hex, started, ageMs) => {
+    const file = path.join(dir, `mutex-${hex.repeat(16)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ pid: process.pid, host: os.hostname(), started }));
+    const when = new Date(Date.now() - ageMs);
+    fs.utimesSync(file, when, when);
+    return file;
+  };
+  const before = "Thu Jan  1 00:00:00 1970";
+
+  const live = marker("a", start, 10000);
+  const blocked = f.cli("claim", ["--pool", "ws", "--wait", "2", "--label", "blocked"]);
+  assert.equal(blocked.code, 75, blocked.stderr);
+  assert.match(blocked.stderr, new RegExp(`the slot mutex is held by pid ${process.pid}\\)`));
+  assert.ok(fs.existsSync(live), "the marker of a live holder with its own start time stays");
+  fs.unlinkSync(live);
+
+  const young = marker("b", before, 0);
+  assert.equal(f.cli("claim", ["--pool", "ws", "--wait", "2"]).code, 75, "a marker younger than 5 s is not checked for a reused pid");
+  assert.ok(fs.existsSync(young));
+  fs.unlinkSync(young);
+
+  const reused = marker("c", before, 10000);
+  const afterReuse = f.cli("claim", ["--pool", "ws", "--wait", "5", "--label", "after reuse"]);
+  assert.equal(afterReuse.code, 0, afterReuse.stderr);
+  assert.match(afterReuse.stderr, new RegExp(`removed slot-mutex marker mutex-c{16}\\.json of pid ${process.pid}: its holder can no longer act`));
+  assert.equal(fs.existsSync(reused), false);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", claimed(afterReuse).token]).code, 0);
+
+  const expired = marker("d", start, 31 * 60000);
+  const afterBackstop = f.cli("claim", ["--pool", "ws", "--wait", "5", "--label", "after backstop"]);
+  assert.equal(afterBackstop.code, 0, afterBackstop.stderr);
+  assert.equal(fs.existsSync(expired), false, "a marker not refreshed for 30 minutes is removed even if its pid looks alive");
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", claimed(afterBackstop).token]).code, 0);
+});

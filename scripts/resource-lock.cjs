@@ -30,7 +30,9 @@
 // the lowest free "slot-<i>.json" with an exclusive link, so a slot file never
 // names two holders. Every change to slot files (assigning, freeing a dead
 // holder's slot, releasing) also holds the pool's slot mutex, so a slot file
-// read under it cannot change before the same process acts on it. Every claim
+// read under it cannot change before the same process acts on it; mutex
+// markers carry their process's start time so a reused pid is told apart from
+// a live holder. Every claim
 // gets a new container from the pool image and
 // release or reclaim removes it: a recreated container is the clean state,
 // because a reset inside a used one cannot show that no process or file
@@ -57,6 +59,16 @@ const CHOOSING = /^choosing-[0-9a-f]{16}\.json$/;
 const ASSIGNING = /^\d{12}-[0-9a-f]{16}\.assigning$/;
 const SLOT = /^slot-(\d+)\.json$/;
 const MUTEX = /^mutex-[0-9a-f]{16}\.json$/;
+// A slot-mutex marker refreshed less than this long ago is not checked for a
+// reused pid: its holder wrote it moments ago, so the pid is the holder's.
+const MUTEX_RECHECK_MS = 5000;
+// Backstop for markers whose holder cannot be judged (another host, a marker
+// without a start time). A live holder refreshes its marker after every docker
+// call inside the mutex, so its marker is never older than one docker timeout
+// (DOCKER_TIMEOUT_MS) however many slots it frees. Keep this far above that
+// timeout when changing either.
+const MUTEX_STALE_MS = 30 * 60 * 1000;
+const DOCKER_TIMEOUT_MS = 120000;
 const HOST = os.hostname();
 const DOCKER = process.env.AI_DEV_KIT_DOCKER || "docker";
 const CONFIG_FILE = path.join(".ai-dev-kit", "workstations.json");
@@ -87,6 +99,7 @@ exit: run -> the command's code; 75 = still queued after --wait, or too little f
 class UsageError extends Error {}
 class ConfigError extends Error {}
 class BlockedError extends Error {}
+class MutexBusyError extends Error {}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Synchronous, for the exit handlers that release slots.
 const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -591,7 +604,7 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
   return pool;
 }
 
-function docker(args, timeout = 120000) {
+function docker(args, timeout = DOCKER_TIMEOUT_MS) {
   const result = spawnSync(DOCKER, args, { encoding: "utf8", timeout, stdio: ["ignore", "pipe", "pipe"] });
   if (result.error) throw new DockerError(`cannot run ${DOCKER} ${args[0]}: ${result.error.message}`);
   return result;
@@ -742,37 +755,79 @@ function noteReclaim(ctx) {
   };
 }
 
+// Start time of a process as ps prints it in the C locale, or null when the
+// process is gone. A pid that now has another start time was reused.
+function processStart(pid) {
+  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
+  return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
+}
+
+let ownStart;
+
+// A marker is left over when its holder cannot act any more: its pid is gone,
+// or belongs to a later process (another start time), or the marker has not
+// been refreshed for MUTEX_STALE_MS. ps runs only for markers older than
+// MUTEX_RECHECK_MS, at most once per pid per acquisition.
+function leftoverMarker(holder, mtimeMs, starts) {
+  const age = Date.now() - mtimeMs;
+  if (age > MUTEX_STALE_MS) return true;
+  if (holder.host !== HOST) return false;
+  if (!alive(holder.pid)) return true;
+  if (age < MUTEX_RECHECK_MS || !holder.started) return false;
+  if (!starts.has(holder.pid)) starts.set(holder.pid, processStart(holder.pid));
+  const start = starts.get(holder.pid);
+  return start !== null && start !== holder.started;
+}
+
 // Mark, then list markers: a marker that exists for a whole listing is in it,
-// so of two contenders at least one sees the other and backs off. The marker
-// of a process that died on this host is removed; that process cannot act.
+// so of two contenders at least one sees the other and backs off. Markers whose
+// holder cannot act any more are removed. fn receives beat(), which refreshes
+// this holder's marker; call it after every slow step inside the mutex.
 function withSlots(dir, fn, waitMs = 60000) {
-  const mine = `mutex-${rand()}.json`;
+  const name = `mutex-${rand()}.json`;
+  const mine = path.join(dir, name);
   const deadline = Date.now() + waitMs;
+  const starts = new Map();
+  ownStart ??= processStart(process.pid);
   let delay = 2;
   for (;;) {
-    createExclusive(dir, mine, { pid: process.pid, host: HOST });
-    const busy = list(dir).some(name => {
-      if (!MUTEX.test(name) || name === mine) return false;
-      const holder = readJson(path.join(dir, name));
-      if (holder && holder.host === HOST && !alive(holder.pid)) { unlinkQuiet(path.join(dir, name)); return false; }
-      return Boolean(holder);
-    });
-    if (!busy) {
-      try { return fn(); } finally { unlinkQuiet(path.join(dir, mine)); }
+    createExclusive(dir, name, { pid: process.pid, host: HOST, started: ownStart });
+    let holder = null;
+    for (const other of list(dir)) {
+      if (!MUTEX.test(other) || other === name) continue;
+      const file = path.join(dir, other);
+      const data = readJson(file), stat = statQuiet(file);
+      if (!data || !stat) continue;
+      if (leftoverMarker(data, stat.mtimeMs, starts)) {
+        unlinkQuiet(file);
+        process.stderr.write(`resource-lock: removed slot-mutex marker ${other} of pid ${data.pid}: its holder can no longer act\n`);
+        continue;
+      }
+      holder = data;
+      break;
     }
-    unlinkQuiet(path.join(dir, mine));
-    if (Date.now() >= deadline) throw new Error(`the slots of ${dir} stayed locked for ${waitMs / 1000}s`);
+    if (!holder) {
+      try { return fn(() => touch(mine)); } finally { unlinkQuiet(mine); }
+    }
+    unlinkQuiet(mine);
+    if (Date.now() >= deadline) {
+      const error = new MutexBusyError(`the slots of ${dir} stayed locked by pid ${holder.pid} for ${waitMs / 1000}s`);
+      error.holder = holder;
+      throw error;
+    }
     pause(delay + Math.random() * delay);
     delay = Math.min(100, delay * 2);
   }
 }
 
 // Runs under the slot mutex in the assigning section; holders whose ticket is
-// gone never touch their slot file.
-function freeOrphans(ctx, live) {
+// gone never touch their slot file. beat() after each docker rm keeps this
+// holder's mutex marker younger than one docker timeout.
+function freeOrphans(ctx, live, beat) {
   for (const [slot, record] of readSlots(ctx.dir)) {
     if (live.has(record.token)) continue;
     const removed = record.container ? docker(["rm", "-f", record.container]).status === 0 : true;
+    beat();
     logEvent(ctx.dir, { event: "freed", slot, token: record.token, container: record.container ?? null, label: record.label ?? null, removed });
     unlinkQuiet(path.join(ctx.dir, `slot-${slot}.json`));
     process.stderr.write(`resource-lock: removed workstation ${record.container} (slot ${slot} of pool ${ctx.pool.name}, "${record.label ?? "?"}"): ` +
@@ -806,22 +861,29 @@ async function waitSlot(ctx, token, waitMs, maxHoldMs, holding, label) {
         view = poolBlockers(dir, again, token);
         if (!view.mine) return { held: false, lost: true };
         if (!view.ahead.length) {
-          const assigned = withSlots(dir, () => {
-            freeOrphans(ctx, new Set(again.tickets.map(entry => entry.token)));
-            const taken = readSlots(dir);
-            for (let slot = 0; slot < pool.slots; slot++) {
-              if (taken.has(slot)) continue;
-              const container = containerName(ctx, slot, token);
-              try {
-                createExclusive(dir, `slot-${slot}.json`, {
-                  token, container, label, pid: process.pid, owner_pid: holding.pid ?? null, host: HOST, cwd: process.cwd(), claimed_at: Date.now(),
-                });
-              } catch (error) { if (error.code === "EEXIST") continue; throw error; }
-              createExclusive(dir, `${token}.held`, { ...holding, slot, held_at: Date.now() });
-              return { held: true, slot, container };
-            }
-            return null;
-          });
+          let assigned = null;
+          try {
+            // Wait for the mutex no longer than the claim's own --wait (at least 1s, at most 60s).
+            assigned = withSlots(dir, beat => {
+              freeOrphans(ctx, new Set(again.tickets.map(entry => entry.token)), beat);
+              const taken = readSlots(dir);
+              for (let slot = 0; slot < pool.slots; slot++) {
+                if (taken.has(slot)) continue;
+                const container = containerName(ctx, slot, token);
+                try {
+                  createExclusive(dir, `slot-${slot}.json`, {
+                    token, container, label, pid: process.pid, owner_pid: holding.pid ?? null, host: HOST, cwd: process.cwd(), claimed_at: Date.now(),
+                  });
+                } catch (error) { if (error.code === "EEXIST") continue; throw error; }
+                createExclusive(dir, `${token}.held`, { ...holding, slot, held_at: Date.now() });
+                return { held: true, slot, container };
+              }
+              return null;
+            }, Math.min(60000, Math.max(1000, deadline - Date.now())));
+          } catch (error) {
+            if (!(error instanceof MutexBusyError)) throw error;
+            if (Date.now() >= deadline) return { held: false, holders: [...readSlots(dir).values()], ahead: view.ahead.length, mutex: error.holder };
+          }
           if (assigned) return assigned;
         }
       } finally { unlinkQuiet(path.join(dir, `${token}.assigning`)); }
@@ -838,7 +900,8 @@ function blockedPool(ctx, options, outcome) {
   const why = outcome.lost ? "lost its queue ticket while waiting (reclaimed after max-hold)"
     : `has no free workstation after ${options.waitMs / 1000}s (${holders.length} of ${ctx.pool.slots} held` +
       `${holders.length ? `: ${holders.map(record => `"${record.label}" pid ${record.owner_pid ?? record.pid}`).join(", ")}` : ""}` +
-      `${outcome.ahead ? `; ${outcome.ahead} waiting ahead` : ""})`;
+      `${outcome.ahead ? `; ${outcome.ahead} waiting ahead` : ""}` +
+      `${outcome.mutex ? `; the slot mutex is held by pid ${outcome.mutex.pid}` : ""})`;
   process.stderr.write(`resource-lock: BLOCKED (retryable): pool ${ctx.pool.name} ${why}; nothing ran\n`);
   process.exit(BLOCKED);
 }

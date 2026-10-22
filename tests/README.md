@@ -141,7 +141,10 @@ No Cascade executable or test-framework plugin is needed for this suite.
   status reports disk use, a checkout lacking the pool's `requires` is refused
   with its `prepare` hint, and a release slowed in `docker rm` while its ticket
   is reclaimed never deletes the slot handed on meanwhile (this case failed
-  before the slot mutex).
+  before the slot mutex), and planted slot-mutex markers show that a live
+  holder's marker is honored, a marker younger than 5 s is not checked, and a
+  marker whose pid now has another start time or that is older than 30 minutes
+  is removed (these failed on 0.21.0, whose claim waited out the mutex).
 
 ## Coverage
 

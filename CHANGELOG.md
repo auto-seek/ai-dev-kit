@@ -8,6 +8,17 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Fixed
+- `resource-lock.cjs` pools: a slot-mutex marker left by a process that died
+  could block every claim and release until their mutex wait ran out, if the
+  system had reused its pid. Markers now record their process's start time
+  (`LC_ALL=C ps -o lstart=`); a marker older than 5 s whose pid now has another
+  start time is removed, and any marker not refreshed for 30 minutes is removed
+  as a backstop. A holder refreshes its marker after every `docker rm` inside
+  the mutex, so a live holder's marker never gets older than one Docker timeout
+  (120 s), however many slots it frees. A claim whose `--wait` ends while the
+  mutex is held exits 75 instead of waiting up to 60 s.
+
 ## [0.21.0] - 2026-10-22
 
 ### Fixed
