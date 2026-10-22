@@ -138,7 +138,10 @@ No Cascade executable or test-framework plugin is needed for this suite.
   configuration errors (including memory beyond Docker's) exit 2, a short
   Docker or host disk stops a claim with 75 before any state, prune removes only
   unheld workstations, superseded images the pool built and old unheld evidence,
-  and status reports disk use.
+  status reports disk use, a checkout lacking the pool's `requires` is refused
+  with its `prepare` hint, and a release slowed in `docker rm` while its ticket
+  is reclaimed never deletes the slot handed on meanwhile (this case failed
+  before the slot mutex).
 
 ## Coverage
 

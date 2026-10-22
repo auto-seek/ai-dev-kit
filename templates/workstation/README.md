@@ -123,7 +123,9 @@ project with 1.6 GB of assets and a 720 MB import cache, running three 4K
 | Example image (base + Godot + .NET + Mesa) | 1.81 GB once, shared by every workstation |
 | Three running workstations | +12 MiB on Docker's disk (about 4 MB writable layer each), back to zero after release |
 | Assets and import cache inside Docker | nothing: the checkout is bind-mounted |
+| A checkout's own import cache, imported from scratch | 0.5 to 0.7 GB (489 MB and 720 MB at two asset versions) |
 | Second checkout's assets and import cache, cloned with `cp -c -R` (APFS) | +1.5 MiB (apparent size 2.3 GB) |
+| The same assets copied inside a workstation (`cp` or .NET `File.Copy`) | their full size: 192 MiB for 192 MiB |
 | A checkout's C# `bin`/`obj` and `.godot/mono` | about 54 MiB |
 | Evidence of one 4K `--panels` run (20 PNGs) | 174 MiB on the host |
 
@@ -135,6 +137,32 @@ of 56 s), and a host import and a container import of the same checkout at the
 same time finished with a cache identical to a single import. A running game
 wrote nothing into the checkout's `.godot`. Workstations therefore use the
 checkout's own `.godot`; there is no separate cache volume to manage.
+
+Pull assets and fill the import cache on the host, where copies can be clones;
+a workstation only mounts them. Pools can enforce this with `requires` and
+`prepare` (see `skills/ai-dev-kit/references/loop-workflow.md`). Docker
+Desktop's file sharing can keep files that a workstation touched open after the
+host deletes them (384 MiB stayed allocated for at least 15 minutes in one
+test and was released on its own within 35; `lsof +L1` lists them), so measure
+freed space once the VM lets go.
+
+## Memory
+
+4K Forward+ `--panels` run, 3 CPUs per workstation; the peak is the
+container's cgroup peak, which includes reclaimable page cache:
+
+| Workstation | Limit | Result | Peak |
+| --- | --- | --- | --- |
+| Run only; C# built on the host (macOS) | 2.5 GB | passes | 2.50 GiB, at the limit |
+| `dotnet build` and run in one workstation | 2.5 GB | passed here; one OOM kill in another run | 2.50 GiB, at the limit |
+| `dotnet build` and run in one workstation | 3 GB | passes | 2.54 GiB |
+| `dotnet build` and run in one workstation | 3.5 GB | passes | 2.55 GiB |
+
+An 8 GB Docker Desktop VM gives containers 7.65 GiB. Three run-only
+workstations at 2.5 GB fit (7.5 GiB declared; 7.1 GiB measured together).
+Workstations that also build need 3 GB: two fit, and three need a Docker VM of
+at least 10 GB. The pool refuses a configuration whose slots × memory exceeds
+what Docker has.
 
 ## Godot example
 

@@ -172,3 +172,11 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `status --pool`, `status` and `skill-first-gate.sh --phase status` show holders, hold times, leases, waiters with wait times and a configurable long-hold reminder, locally only.
 - [x] Disk: workstations bind-mount the agent's checkout (assets and import cache are never copied into Docker); measured three 4K workstations at +12 MiB of Docker disk; claims check `min_free_disk` on Docker's and the host disk and exit 75 before any state; `status --pool` reports actual use (df, allocated blocks); `prune` removes only unheld workstation containers, superseded images the pool built and, opt-in, old unheld evidence. Godot import caches were measured identical across macOS and Linux, shareable between checkouts by copy-on-write clone, and unharmed by a concurrent host and container import.
 - [x] `tests/workstation-pool.test.cjs` (real processes, `tests/fake-docker.cjs` for the Docker CLI) runs in `test:team`; Docker-backed pool cases run in `test:workstation`; `loop-workflow.md`, the preflight skill, gate migration doc, template README and tests README describe pools; CHANGELOG has an Unreleased entry and no version bump (left to the maintainer); `npm run build` and skill validation pass.
+
+## workstation-pool-followup
+
+- [x] Every slot-file change (assigning, freeing orphans, `release`, cleanup after a failed claim or finished run) holds a per-pool slot mutex (mark-then-list markers, dead holders' markers removed); a test with a release slowed in `docker rm` while the next claim reclaims its ticket fails on 0.20.0 (the next holder's slot file is deleted) and passes now.
+- [x] Pools can declare `requires` and `prepare`; an unprepared checkout is refused with exit 1 before any state. Docs say to fill assets and import caches on the host (clone, not copy) because copies made in a workstation through the bind mount are real host data (measured), and that Docker Desktop can hold deleted files open.
+- [x] Memory of a workstation that builds C# and runs a 4K Godot capture is measured at several limits and the docs give the limit and how many fit in an 8 GB Docker VM.
+- [x] `npm run build`, skill validation and the real-Docker workstation suite pass; CHANGELOG has an Unreleased entry and no version bump.
+

@@ -419,6 +419,8 @@ checkout (relative paths resolve against the project root):
       "env": { "NUGET_FALLBACK_PACKAGES": "/nuget-fallback" },
       "start": ["godot", "--path", "Game", "--audio-driver", "Dummy",
                 "--rendering-method", "forward_plus", "--rendering-driver", "vulkan", "--"],
+      "requires": ["Game/assets", "Game/.godot/imported", "Game/.godot/mono"],
+      "prepare": "on the host: pull assets, cp -c -R the .godot cache of a checkout with the same lock hash, dotnet build",
       "timeout_seconds": 1800, "max_hold_seconds": 3600
     }
   }
@@ -433,11 +435,19 @@ checkout (relative paths resolve against the project root):
 - The 2.5g default covers running, not building. A Godot .NET project that ran
   `dotnet build`, the first import and a 1080p run inside one 2.5g container
   was OOM-killed at the limit; with 4g the same build and run peaked at 2.05 GiB.
-  Either build and import on the host and only run in workstations, or raise
-  `memory` and lower `slots` so slots × memory still fits Docker's memory.
+  `dotnet build` and a 4K run (import cache cloned) peaked at 2.55 GiB and was
+  once OOM-killed at 2.5g, while a run of C# built on the host passed at 2.5g.
+  Either build and import on the host and only run in workstations (the
+  assemblies are portable: a macOS build ran unchanged), which keeps three in an
+  8 GB Docker VM, or raise `memory` (3g covered build and a 4K run) and lower
+  `slots` so slots × memory still fits Docker's memory: two 3g workstations fit
+  an 8 GB VM, three need at least 10 GB.
 - A claim exits 2 with the numbers when slots × memory over all pools exceeds the
   memory Docker can use, or `cpus` exceeds Docker's CPUs; other configuration
   errors also exit 2 and name the setting.
+- `requires` lists paths the checkout must already have; a claim for a checkout
+  without them exits 1 before anything starts and prints `prepare`. Prepare
+  checkouts on the host (see Checkouts below), not in a workstation.
 
 ```bash
 # One run: claim, run start + args on the workstation's screen, release.
@@ -490,12 +500,22 @@ node "<kit>/scripts/resource-lock.cjs" release --pool godot --token "$token"
   directories of claims that are no longer held and older than n days. It never
   removes a held workstation, an image it did not build, or project files;
   clean checkouts and build output with the project's own tools.
-- Checkouts: a new checkout does not need its own engine import. Clone the
-  import cache of an already-imported checkout of the same asset version
-  copy-on-write (`cp -c -R` on APFS, `cp --reflink=always -R` on Btrfs/XFS) and
-  let the engine verify it; measured for Godot 4.7: macOS and Linux imports are
-  byte-identical, the clone costs about 1 MiB of real disk, and the follow-up
-  import finishes in about 4 s without rewriting anything.
+- Checkouts: fill assets and the engine import cache on the host and let
+  workstations only mount them. The host can copy-on-write (APFS clonefile, which
+  .NET `File.Copy` and `cp -c` use; `cp --reflink=always` on Btrfs/XFS), but a
+  copy made inside a workstation through the bind mount is real data on the host:
+  measured 192 MiB for 192 MiB of assets with both `cp` and .NET `File.Copy` in
+  the container, against 0 for `cp -c` on the host. A new checkout does not need
+  its own import either: clone the import cache of a checkout with the same asset
+  lock (for example the same hash of the lock file) with `cp -c -R` and let the
+  engine verify it. Measured for Godot 4.7: macOS and Linux imports are
+  byte-identical, the clone costs about 1 MiB of real disk, and the verifying
+  import takes about 4 s instead of a minute.
+- Deleting on the host a file that a workstation wrote or read may not free its
+  space at once: Docker Desktop's file sharing can keep it open (seen: 384 MiB
+  held for at least 15 minutes and released on its own within 35; `lsof +L1`
+  lists such files). Measure freed space after the VM lets go, not right after
+  `rm`.
 
 ### Exit 75 means BLOCKED (retryable)
 

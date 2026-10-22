@@ -8,11 +8,30 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Fixed
+- `resource-lock.cjs` pools: `release` could delete the slot file of the next
+  holder when its own ticket was reclaimed while it removed its container (an
+  owner pid that is gone makes a ticket reclaimable however recently it was
+  refreshed). Every change to slot files (assigning, freeing a dead holder's
+  slot, `release`, cleanup after a failed claim or a finished run) now holds a
+  per-pool slot mutex, so a slot file checked under it cannot change before the
+  same process acts on it. This replaces the ticket refresh added to the
+  cleanup in 0.20.0.
+
+### Added
+- Pool settings `requires` (paths the checkout must already have) and
+  `prepare` (how to prepare one): a claim for an unprepared checkout exits 1
+  before anything starts. Assets and import caches belong on the host, where
+  they can be cloned; copies made inside a workstation through the bind mount
+  are real data on the host disk.
+
 ### Changed
-- `references/loop-workflow.md` notes that the 2.5g workstation default covers
-  running, not building: a measured `dotnet build`, first import and run in one
-  2.5g container was OOM-killed. Build on the host, or raise `memory` and lower
-  `slots`.
+- `references/loop-workflow.md` and the workstation README note that the 2.5g
+  workstation default covers running, not building: a measured `dotnet build`,
+  first import and run in one 2.5g container was OOM-killed, and a build plus a
+  4K Godot run peaked at 2.55 GiB. Build and import on the host (three run-only
+  workstations fit an 8 GB Docker VM), or raise `memory` (3g for build and run)
+  and lower `slots` (two fit an 8 GB VM; three need 10 GB).
 
 ## [0.20.0] - 2026-10-22
 
