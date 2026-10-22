@@ -18,7 +18,8 @@
 //   run -d --name <n> [--label k=v]... ... <image> [args]   creates <n>; a used name exits 125
 //   exec <n> xdpyinfo                        exit 0 while <n> exists
 //   exec <n> ws-run [options] -- <cmd...>    runs <cmd...> on the host with WS_CONTAINER=<n>
-//   rm -f <n>...                             removes the named containers
+//   rm -f <n>...                             removes the named containers, after
+//                                           $FAKE_DOCKER_RM_DELAY_MS (default 0)
 //   ps -a [-s] [--filter label=k=v|ancestor=<i>]... --format F
 //                                           prints "name\trunning\t<slot label>\t<token label>[\t4.05MB (virtual 1.34GB)]"
 "use strict";
@@ -108,6 +109,7 @@ switch (command) {
     process.exit(result.status ?? 1);
   }
   case "rm":
+    if (process.env.FAKE_DOCKER_RM_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_DOCKER_RM_DELAY_MS));
     for (const name of rest.filter(word => !word.startsWith("-"))) {
       try { fs.unlinkSync(file(name)); process.stdout.write(`${name}\n`); } catch (error) { if (error.code !== "ENOENT") throw error; }
     }

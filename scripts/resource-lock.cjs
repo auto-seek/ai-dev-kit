@@ -28,7 +28,10 @@
 // first waiter assigns: it marks itself "<token>.assigning" and checks again
 // (the claim step above), frees slots whose holder ticket is gone, and takes
 // the lowest free "slot-<i>.json" with an exclusive link, so a slot file never
-// names two holders. Every claim gets a new container from the pool image and
+// names two holders. Every change to slot files (assigning, freeing a dead
+// holder's slot, releasing) also holds the pool's slot mutex, so a slot file
+// read under it cannot change before the same process acts on it. Every claim
+// gets a new container from the pool image and
 // release or reclaim removes it: a recreated container is the clean state,
 // because a reset inside a used one cannot show that no process or file
 // survived, and start-up costs about a second.
@@ -53,6 +56,7 @@ const HELD = /^\d{12}-[0-9a-f]{16}\.held$/;
 const CHOOSING = /^choosing-[0-9a-f]{16}\.json$/;
 const ASSIGNING = /^\d{12}-[0-9a-f]{16}\.assigning$/;
 const SLOT = /^slot-(\d+)\.json$/;
+const MUTEX = /^mutex-[0-9a-f]{16}\.json$/;
 const HOST = os.hostname();
 const DOCKER = process.env.AI_DEV_KIT_DOCKER || "docker";
 const CONFIG_FILE = path.join(".ai-dev-kit", "workstations.json");
@@ -84,6 +88,8 @@ class UsageError extends Error {}
 class ConfigError extends Error {}
 class BlockedError extends Error {}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Synchronous, for the exit handlers that release slots.
+const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const rand = () => crypto.randomBytes(8).toString("hex");
 
 function parse(argv) {
@@ -535,7 +541,7 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
   const at = key => `pools.${name}.${key}`;
   if (!isObject(raw)) fail(`pools.${name} must be an object`);
   onlyKeys(raw, ["image", "build", "slots", "cpus", "memory", "screen", "env", "mounts", "start", "user", "min_free_disk",
-    "timeout_seconds", "max_hold_seconds", "warn_hold_seconds"], `pools.${name}`, fail);
+    "requires", "prepare", "timeout_seconds", "max_hold_seconds", "warn_hold_seconds"], `pools.${name}`, fail);
   const pool = { ...POOL_DEFAULTS, ...raw, name };
   if (typeof pool.image !== "string" || !/^[a-z0-9][\w./:@-]*$/i.test(pool.image)) fail(`${at("image")} must name a Docker image; add "build" to build it from a Dockerfile`);
   if (raw.build !== undefined) {
@@ -573,6 +579,12 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
     fail(`${at("start")} must be a non-empty list of command words, e.g. ["godot", "--path", "Game"]`);
   }
   if (!["host", "image"].includes(pool.user)) fail(`${at("user")} must be "host" (your uid) or "image"`);
+  pool.requires = raw.requires ?? [];
+  if (!Array.isArray(pool.requires) || pool.requires.some(item => typeof item !== "string" || !item || path.isAbsolute(item) || item.split(/[\\/]/).includes(".."))) {
+    fail(`${at("requires")} must list paths inside the checkout, e.g. ["Game/.godot/imported"]`);
+  }
+  pool.prepare = raw.prepare ?? "";
+  if (typeof pool.prepare !== "string") fail(`${at("prepare")} must be text telling how to prepare a checkout on the host`);
   pool.timeoutS = wholeSeconds(raw.timeout_seconds, POOL_DEFAULTS.timeout_seconds, at("timeout_seconds"), 0, fail);
   pool.maxHoldS = wholeSeconds(raw.max_hold_seconds, POOL_DEFAULTS.max_hold_seconds, at("max_hold_seconds"), 1, fail);
   pool.warnHoldS = wholeSeconds(raw.warn_hold_seconds, warnHoldS, at("warn_hold_seconds"), 0, fail);
@@ -730,8 +742,33 @@ function noteReclaim(ctx) {
   };
 }
 
-// Runs only in the assigning section, so no other process frees or takes a
-// slot meanwhile; holders whose ticket is gone never touch their slot file.
+// Mark, then list markers: a marker that exists for a whole listing is in it,
+// so of two contenders at least one sees the other and backs off. The marker
+// of a process that died on this host is removed; that process cannot act.
+function withSlots(dir, fn, waitMs = 60000) {
+  const mine = `mutex-${rand()}.json`;
+  const deadline = Date.now() + waitMs;
+  let delay = 2;
+  for (;;) {
+    createExclusive(dir, mine, { pid: process.pid, host: HOST });
+    const busy = list(dir).some(name => {
+      if (!MUTEX.test(name) || name === mine) return false;
+      const holder = readJson(path.join(dir, name));
+      if (holder && holder.host === HOST && !alive(holder.pid)) { unlinkQuiet(path.join(dir, name)); return false; }
+      return Boolean(holder);
+    });
+    if (!busy) {
+      try { return fn(); } finally { unlinkQuiet(path.join(dir, mine)); }
+    }
+    unlinkQuiet(path.join(dir, mine));
+    if (Date.now() >= deadline) throw new Error(`the slots of ${dir} stayed locked for ${waitMs / 1000}s`);
+    pause(delay + Math.random() * delay);
+    delay = Math.min(100, delay * 2);
+  }
+}
+
+// Runs under the slot mutex in the assigning section; holders whose ticket is
+// gone never touch their slot file.
 function freeOrphans(ctx, live) {
   for (const [slot, record] of readSlots(ctx.dir)) {
     if (live.has(record.token)) continue;
@@ -769,19 +806,23 @@ async function waitSlot(ctx, token, waitMs, maxHoldMs, holding, label) {
         view = poolBlockers(dir, again, token);
         if (!view.mine) return { held: false, lost: true };
         if (!view.ahead.length) {
-          freeOrphans(ctx, new Set(again.tickets.map(entry => entry.token)));
-          const taken = readSlots(dir);
-          for (let slot = 0; slot < pool.slots; slot++) {
-            if (taken.has(slot)) continue;
-            const container = containerName(ctx, slot, token);
-            try {
-              createExclusive(dir, `slot-${slot}.json`, {
-                token, container, label, pid: process.pid, owner_pid: holding.pid ?? null, host: HOST, cwd: process.cwd(), claimed_at: Date.now(),
-              });
-            } catch (error) { if (error.code === "EEXIST") continue; throw error; }
-            createExclusive(dir, `${token}.held`, { ...holding, slot, held_at: Date.now() });
-            return { held: true, slot, container };
-          }
+          const assigned = withSlots(dir, () => {
+            freeOrphans(ctx, new Set(again.tickets.map(entry => entry.token)));
+            const taken = readSlots(dir);
+            for (let slot = 0; slot < pool.slots; slot++) {
+              if (taken.has(slot)) continue;
+              const container = containerName(ctx, slot, token);
+              try {
+                createExclusive(dir, `slot-${slot}.json`, {
+                  token, container, label, pid: process.pid, owner_pid: holding.pid ?? null, host: HOST, cwd: process.cwd(), claimed_at: Date.now(),
+                });
+              } catch (error) { if (error.code === "EEXIST") continue; throw error; }
+              createExclusive(dir, `${token}.held`, { ...holding, slot, held_at: Date.now() });
+              return { held: true, slot, container };
+            }
+            return null;
+          });
+          if (assigned) return assigned;
         }
       } finally { unlinkQuiet(path.join(dir, `${token}.assigning`)); }
     }
@@ -825,18 +866,35 @@ async function startWorkstation(ctx, slot, container, token, out, project) {
   throw new DockerError(`workstation ${container} started but its screen did not answer within 10s`);
 }
 
-// Undo a claim that did not complete, or release one that did. Refreshing the
-// ticket first keeps it from being reclaimed, and its slot freed and handed to
-// another holder, between the token check and the unlink; a ticket already
-// reclaimed leaves its slot file to freeOrphans.
+// Undo a claim that did not complete, or end a run. The container is always
+// this claim's own; the slot file is removed only if it still names this
+// claim, checked and removed under the slot mutex. Refreshing the ticket alone
+// is not enough: a ticket whose owner pid is gone is reclaimed however fresh.
 function giveBack(ctx, token, assigned) {
-  const ours = touch(path.join(ctx.dir, `${token}.json`));
   if (assigned) {
-    try { docker(["rm", "-f", assigned.container]); } catch (error) { process.stderr.write(`resource-lock: ${error.message}\n`); }
     const file = path.join(ctx.dir, `slot-${assigned.slot}.json`);
-    if (ours && readJson(file)?.token === token) unlinkQuiet(file);
+    try {
+      withSlots(ctx.dir, () => {
+        docker(["rm", "-f", assigned.container]);
+        if (readJson(file)?.token === token) unlinkQuiet(file);
+      }, 10000);
+    } catch (error) {
+      process.stderr.write(`resource-lock: ${error.message}; the next claim frees slot ${assigned.slot}\n`);
+      try { docker(["rm", "-f", assigned.container]); } catch { /* reported above */ }
+    }
   }
   removeTicket(ctx.dir, token);
+}
+
+// Copies made inside a workstation through the bind mount are real data on the
+// host, while the host can clone (APFS clonefile, reflink): prepare checkouts
+// on the host, and refuse a claim for a checkout that is not prepared.
+function requirePrepared(ctx, project) {
+  const missing = ctx.pool.requires.filter(item => !fs.existsSync(path.join(project, item)));
+  if (missing.length) {
+    throw new Error(`checkout ${project} lacks ${missing.join(", ")}, which pool ${ctx.pool.name} requires; ` +
+      `prepare it on the host, not in a workstation${ctx.pool.prepare ? `: ${ctx.pool.prepare}` : ""}; nothing ran`);
+  }
 }
 
 function evidenceDir(ctx, options, token) {
@@ -856,8 +914,9 @@ async function claim(options) {
   if (capacity.problems.length) throw new ConfigError(capacity.problems.join("; "));
   ensureImage(ctx);
   checkDisk(ctx, options);
-  stateDir(ctx.base, "pools", ctx.pool.name, true);
   const project = worktree(options);
+  requirePrepared(ctx, project);
+  stateDir(ctx.base, "pools", ctx.pool.name, true);
   const owner = options.ownerPid ? Number(options.ownerPid) : null;
   const maxHoldMs = options.maxHoldMs ?? ctx.pool.maxHoldS * 1000;
   const label = options.label ?? `claim (owner pid ${owner ?? "unchecked"})`;
@@ -891,8 +950,9 @@ async function runPool(options) {
   if (capacity.problems.length) throw new ConfigError(capacity.problems.join("; "));
   ensureImage(ctx);
   checkDisk(ctx, options);
-  stateDir(ctx.base, "pools", ctx.pool.name, true);
   const project = worktree(options);
+  requirePrepared(ctx, project);
+  stateDir(ctx.base, "pools", ctx.pool.name, true);
   const argv = options.argv ?? [];
   const maxHoldMs = options.maxHoldMs ?? ctx.pool.maxHoldS * 1000;
   const label = options.label ?? [...ctx.pool.start, ...argv].join(" ").slice(0, 160);
@@ -949,13 +1009,21 @@ function heldBy(dir, pool, token, verb) {
   return found;
 }
 
+// Under the slot mutex the slot file found by heldBy stays this claim's until
+// it is removed here, even if a scan reclaims the ticket meanwhile.
 function releasePool(options) {
   const dir = stateDir(baseDir(options), "pools", options.pool, false);
-  const { slot, record } = heldBy(dir, options.pool, options.token, "release");
-  const removed = docker(["rm", "-f", record.container]);
-  if (removed.status !== 0) process.stderr.write(`resource-lock: docker rm ${record.container} failed (${lastLine(removed.stderr)}); the next claim of slot ${slot} removes it\n`);
-  unlinkQuiet(path.join(dir, `slot-${slot}.json`));
-  removeTicket(dir, options.token);
+  if (!fs.existsSync(dir)) throw new NotHeldError(`pool ${options.pool} ticket ${options.token} is not held (no claims in this pool)`);
+  const { slot, record } = withSlots(dir, () => {
+    const found = heldBy(dir, options.pool, options.token, "release");
+    const removed = docker(["rm", "-f", found.record.container]);
+    if (removed.status !== 0) {
+      process.stderr.write(`resource-lock: docker rm ${found.record.container} failed (${lastLine(removed.stderr)}); the next claim of slot ${found.slot} removes it\n`);
+    }
+    unlinkQuiet(path.join(dir, `slot-${found.slot}.json`));
+    removeTicket(dir, options.token);
+    return found;
+  });
   process.stdout.write(`released ${record.container} (slot ${slot} of pool ${options.pool})\n`);
 }
 

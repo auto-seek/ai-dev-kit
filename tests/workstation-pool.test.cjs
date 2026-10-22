@@ -76,8 +76,8 @@ function fixture(t, pool = {}, extra = {}) {
     const result = spawnSync(process.execPath, args(command, rest), { cwd: root, encoding: "utf8", timeout: 60000, env: { ...env, ...extraEnv } });
     return { code: result.status, stdout: result.stdout, stderr: result.stderr };
   };
-  const start = (command, rest) => {
-    const child = spawn(process.execPath, args(command, rest), { cwd: root, detached: true, env, stdio: ["ignore", "pipe", "pipe"] });
+  const start = (command, rest, extraEnv = {}) => {
+    const child = spawn(process.execPath, args(command, rest), { cwd: root, detached: true, env: { ...env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
     children.add(child);
     let stdout = "", stderr = "";
     child.stdout.on("data", chunk => { stdout += chunk; });
@@ -195,6 +195,26 @@ test("only the first waiter in line assigns, and a live holder's workstation is 
   assert.match(third.stderr, new RegExp(`removed workstation ${container} \\(slot 0 of pool ws, "live holder"\\): its holder ticket is gone`));
   assert.ok(!f.containers().includes(container));
   for (const fields of [second, claimed(third)]) assert.equal(f.cli("release", ["--pool", "ws", "--token", fields.token]).code, 0);
+});
+
+test("a release slowed in docker rm never removes the slot handed on meanwhile", async t => {
+  const f = fixture(t, { slots: 1 });
+  const owner = f.sleeper();
+  const first = claimed(f.cli("claim", ["--pool", "ws", "--owner-pid", String(owner.pid), "--label", "first"]));
+  kill(owner.pid);
+  await waitFor(() => !alive(owner.pid), "the owner to die");
+  // The owner is gone, so the next claim reclaims "first" while its own release is still removing the container.
+  const release = f.start("release", ["--pool", "ws", "--token", first.token], { FAKE_DOCKER_RM_DELAY_MS: "2000" });
+  await waitFor(() => f.calls().some(call => call[0] === "rm" && call.includes(first.workstation)), "the release to start removing its container");
+  const next = f.cli("claim", ["--pool", "ws", "--wait", "20", "--label", "next"]);
+  assert.equal(next.code, 0, next.stderr);
+  await release.done;
+  const slot = JSON.parse(fs.readFileSync(path.join(f.root, ".ai-dev-kit", "pools", "ws", "slot-0.json"), "utf8"));
+  assert.equal(slot.token, claimed(next).token, "the slot handed to next must survive the slow release");
+  assert.equal(f.status().slots[0].label, "next");
+  assert.equal(f.cli("claim", ["--pool", "ws", "--wait", "0", "--label", "third"]).code, 75, "slot 0 must not be handed out twice");
+  assert.deepEqual(f.containers(), [claimed(next).workstation]);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", claimed(next).token]).code, 0);
 });
 
 test("only the holder's own token releases a workstation", async t => {
@@ -469,4 +489,18 @@ test("status reports actual disk use: Docker and host free space, image, writabl
   assert.match(text, new RegExp(`^ {2}workstation ${held.workstation}: 4\\.05MB writable layer \\(running\\)$`, "m"));
   assert.match(text, /^ {2}evidence .*: 1 run\(s\), 0\.00 GiB allocated$/m);
   f.cli("release", ["--pool", "ws", "--token", held.token]);
+});
+
+test("a checkout lacking what the pool requires is refused with the host-side preparation hint", async t => {
+  const f = fixture(t, { slots: 1, requires: ["Game/.godot/imported", "Game/assets"], prepare: "pull assets, then cp -c -R the import cache of a checkout with the same lock" });
+  const result = f.cli("run", ["--pool", "ws", "--", f.log, "never", "0"]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /checkout .* lacks Game\/\.godot\/imported, Game\/assets, which pool ws requires; prepare it on the host, not in a workstation: pull assets, then cp -c -R the import cache/);
+  assert.deepEqual(f.events(), []);
+  assert.equal(fs.existsSync(path.join(f.root, ".ai-dev-kit", "pools", "ws")), false);
+  fs.mkdirSync(path.join(f.root, "Game", ".godot", "imported"), { recursive: true });
+  fs.mkdirSync(path.join(f.root, "Game", "assets"));
+  assert.equal(f.cli("run", ["--pool", "ws", "--", f.log, "ran", "0"]).code, 0);
+  f.writeConfig({ requires: ["../outside"] });
+  assert.match(f.cli("claim", ["--pool", "ws"]).stderr, /requires must list paths inside the checkout/);
 });
