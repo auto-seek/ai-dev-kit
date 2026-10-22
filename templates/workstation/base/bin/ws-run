@@ -1,0 +1,111 @@
+#!/bin/bash
+# Workstation entry: give one agent a private virtual screen inside this
+# container, run its command there and record the outcome. Nothing here can
+# reach the host's display, focus or pointer; input and screenshots use the
+# container's own X server only.
+#
+#   ws-run [options]                 session: keep the screen up until stopped;
+#                                    drive it with `docker exec <ctr> ...`
+#   ws-run [options] -- command...   batch: run one command, then return its code
+#
+# Batch mode reuses a screen that is already up (a session container) and
+# otherwise starts one for the duration of the command. It writes
+# <out>/ws-run.json with the exit code, timing and screen, and exits with the
+# command's code: 124 when --timeout expired, 127/126 when it cannot start.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: ws-run [--screen WxHxD] [--out DIR] [--timeout SECONDS] [--shot NAME] [-- command...]
+  --screen   virtual screen geometry (default $WS_SCREEN, else 1920x1080x24)
+  --out      evidence directory (default $WS_OUT, else /ws/out)
+  --timeout  stop the command's whole process group after SECONDS (0 = none)
+  --shot     after the command, save the screen as <out>/NAME.png
+EOF
+  exit 2
+}
+
+screen=${WS_SCREEN:-1920x1080x24}
+out=${WS_OUT:-/ws/out}
+limit=0
+shot=""
+while [ $# -gt 0 ]; do
+  case $1 in --screen|--out|--timeout|--shot) [ $# -ge 2 ] || usage ;; esac
+  case $1 in
+    --screen) screen=$2; shift 2 ;;
+    --out) out=$2; shift 2 ;;
+    --timeout) limit=$2; shift 2 ;;
+    --shot) shot=$2; shift 2 ;;
+    --) shift; break ;;
+    -h|--help) usage ;;
+    *) echo "ws-run: unknown option: $1" >&2; usage ;;
+  esac
+done
+[[ $screen =~ ^[0-9]+x[0-9]+x(8|16|24)$ ]] || { echo "ws-run: --screen must look like 1920x1080x24" >&2; exit 2; }
+[[ $limit =~ ^[0-9]+$ ]] || { echo "ws-run: --timeout must be whole seconds" >&2; exit 2; }
+[[ -z $shot || $shot =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ws-run: --shot must be a plain file name" >&2; exit 2; }
+
+export DISPLAY=${DISPLAY:-:99} WS_OUT=$out
+mkdir -p "$out"
+# Run with --user <host uid> so files in bind mounts keep their owner; an
+# unknown uid gets HOME=/, which SDKs and engines cannot write to.
+if [ ! -w "${HOME:-/}" ]; then
+  export HOME=/tmp/ws-home-$(id -u)
+  mkdir -p "$HOME"
+fi
+
+xvfb=""
+stop_xvfb() { [ -n "$xvfb" ] && kill "$xvfb" 2>/dev/null && wait "$xvfb" 2>/dev/null; xvfb=""; }
+if ! xdpyinfo >/dev/null 2>&1; then
+  Xvfb "$DISPLAY" -screen 0 "$screen" -nolisten tcp -noreset >>"$out/xvfb.log" 2>&1 &
+  xvfb=$!
+  for _ in $(seq 1 100); do
+    xdpyinfo >/dev/null 2>&1 && break
+    kill -0 "$xvfb" 2>/dev/null || { echo "ws-run: Xvfb exited; see $out/xvfb.log" >&2; exit 1; }
+    sleep 0.1
+  done
+  xdpyinfo >/dev/null 2>&1 || { stop_xvfb; echo "ws-run: Xvfb did not answer on $DISPLAY" >&2; exit 1; }
+fi
+
+if [ $# -eq 0 ]; then
+  [ -n "$xvfb" ] || { echo "ws-run: a screen is already up on $DISPLAY" >&2; exit 2; }
+  trap 'stop_xvfb; exit 0' TERM INT
+  echo "ws-run: session ready on $DISPLAY ($screen)"
+  wait "$xvfb"
+  exit 1
+fi
+
+started=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+t0=$(date +%s%N)
+# timeout(1) leads its own process group and signals the whole group, so the
+# command's descendants stop with it.
+timeout --kill-after=10 "$limit" "$@" &
+group=$!
+forward() { kill -"$1" -- -"$group" 2>/dev/null || true; }
+trap 'forward TERM' TERM
+trap 'forward INT' INT
+code=0
+while :; do
+  wait "$group" && code=0 || code=$?
+  kill -0 "$group" 2>/dev/null || break
+done
+t1=$(date +%s%N)
+# Background descendants must not outlive the command on the shared screen.
+if kill -0 -- -"$group" 2>/dev/null; then
+  forward TERM; sleep 2; forward KILL
+fi
+[ -n "$shot" ] && { ws-shot "$out/$shot.png" || echo "ws-run: final screenshot failed" >&2; }
+# Container-wide cgroup v2 totals since the container started (null if absent).
+# 137 alone cannot tell a timeout's SIGKILL from the OOM killer; oom_kills can.
+peak=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo null)
+cpu=$(awk '$1 == "usage_usec" {print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null || true)
+ooms=$(awk '$1 == "oom_kill" {print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || true)
+jq -n --arg started "$started" --arg screen "$screen" --arg display "$DISPLAY" \
+  --argjson exit "$code" --argjson limit "$limit" --argjson ms "$(( (t1 - t0) / 1000000 ))" \
+  --argjson peak "$peak" --argjson cpu "${cpu:-null}" --argjson ooms "${ooms:-null}" \
+  '{exit: $exit, timed_out: ($limit > 0 and $ms >= $limit * 1000 and ($exit == 124 or $exit == 137)),
+    duration_s: ($ms / 1000), started_at: $started, screen: $screen, display: $display, command: $ARGS.positional,
+    container: {memory_peak_bytes: $peak, oom_kills: $ooms, cpu_seconds: (if $cpu then $cpu / 1000000 else null end)}}' \
+  --args -- "$@" >"$out/ws-run.json"
+stop_xvfb
+exit "$code"

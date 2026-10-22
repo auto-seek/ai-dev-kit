@@ -25,7 +25,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bash -n bootstrap/init-skill.sh bootstrap/install-adapter.sh bootstrap/install-skill.sh scripts/skill-first-gate.sh tests/fake-cascade tests/run-gate-tests.sh tests/lease-redis-test.sh && python3 -c \"compile(open('scripts/quick-validate-skill.py').read(), 'scripts/quick-validate-skill.py', 'exec')\" && for d in skills/*; do test -f \"$d/SKILL.md\"; done && node -c scripts/generate-skill-profile.cjs && node -c scripts/upgrade-v1-to-skill.cjs && node -c scripts/set-coordination.cjs && node -c scripts/test-review-evidence.cjs && node -c scripts/cascade-process.cjs && node -c scripts/cascade-lane.cjs && node -c scripts/project-gate-evidence.cjs && node -c scripts/resource-lock.cjs && node -e \"const fs=require('fs'); for (const f of ['marketplace/index.json','.claude-plugin/marketplace.json','.claude-plugin/plugin.json']) JSON.parse(fs.readFileSync(f,'utf8'))\" && npm run test:review && npm run test:team && FAST=1 bash tests/run-gate-tests.sh",
+    "build": "bash -n bootstrap/init-skill.sh bootstrap/install-adapter.sh bootstrap/install-skill.sh scripts/skill-first-gate.sh tests/fake-cascade tests/run-gate-tests.sh tests/lease-redis-test.sh templates/workstation/base/bin/ws-run templates/workstation/base/bin/ws-shot templates/workstation/base/bin/ws-input templates/workstation/examples/godot-dotnet/fetch.sh && python3 -c \"compile(open('scripts/quick-validate-skill.py').read(), 'scripts/quick-validate-skill.py', 'exec')\" && for d in skills/*; do test -f \"$d/SKILL.md\"; done && node -c scripts/generate-skill-profile.cjs && node -c scripts/upgrade-v1-to-skill.cjs && node -c scripts/set-coordination.cjs && node -c scripts/test-review-evidence.cjs && node -c scripts/cascade-process.cjs && node -c scripts/cascade-lane.cjs && node -c scripts/project-gate-evidence.cjs && node -c scripts/resource-lock.cjs && node -e \"const fs=require('fs'); for (const f of ['marketplace/index.json','.claude-plugin/marketplace.json','.claude-plugin/plugin.json']) JSON.parse(fs.readFileSync(f,'utf8'))\" && npm run test:review && npm run test:team && FAST=1 bash tests/run-gate-tests.sh",
     "test": "npm run test:review && npm run test:team && bash tests/run-gate-tests.sh",
     "test:fast": "npm run test:review && npm run test:team && FAST=1 bash tests/run-gate-tests.sh",
     "test:review": "node --test tests/test-review-scope.test.cjs",
@@ -36,6 +36,7 @@
     "flow": "node scripts/cascade-flow.cjs",
     "test:integration": "node --test tests/production-workflow.test.cjs tests/cascade-lane-team.test.cjs tests/cascade-doctor.test.cjs",
     "test:lease": "bash tests/lease-redis-test.sh",
+    "test:workstation": "node --test tests/workstation.test.cjs",
     "init": "bash bootstrap/init-skill.sh",
     "init:skill": "bash bootstrap/init-skill.sh",
     "install:adapter": "bash bootstrap/install-adapter.sh",

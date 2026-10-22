@@ -1,0 +1,57 @@
+#!/bin/bash
+# Inject keyboard and pointer input into the container's virtual screen through
+# XTEST (xdotool). Only the X server on $DISPLAY receives it; the host's focus
+# and pointer are out of reach. There is no window manager, so focus a window
+# before sending keys to it.
+#   ws-input wait PATTERN [SECONDS]      wait for a visible window; print its id
+#   ws-input focus PATTERN               give the first matching window input focus
+#   ws-input key KEY...                  press keys, e.g. Escape ctrl+s Page_Down
+#   ws-input type TEXT                   type text
+#   ws-input move X Y                    move the virtual pointer (screen pixels)
+#   ws-input click X Y [BUTTON]          move, then click (1 left, 2 middle, 3 right)
+# PATTERN is a regex tried against the title, then WM_CLASS class and instance.
+# Prefer an ASCII class: some toolkits (Godot) store non-ASCII titles in WM_NAME
+# as Latin-1, which xdotool cannot match.
+set -euo pipefail
+usage() { sed -n '6,11s/^#  //p' "$0" >&2; exit 2; }
+[ $# -ge 1 ] || usage
+verb=$1; shift
+int='^[0-9]+$'
+# xdotool 3.20160805 ignores --any, so try each property in turn.
+find_window() {
+  local by id
+  for by in --name --class --classname; do
+    id=$(xdotool search --onlyvisible "$by" "$1" 2>/dev/null | head -n 1 || true)
+    [ -n "$id" ] && { echo "$id"; return 0; }
+  done
+  return 1
+}
+case $verb in
+  wait)
+    [ $# -ge 1 ] && [ $# -le 2 ] || usage
+    seconds=${2:-30}
+    [[ $seconds =~ $int ]] || usage
+    deadline=$(( $(date +%s) + seconds ))
+    until find_window "$1"; do
+      [ "$(date +%s)" -lt "$deadline" ] || { echo "ws-input: no visible window matches $1 after ${seconds}s" >&2; exit 1; }
+      sleep 0.2
+    done ;;
+  focus)
+    [ $# -eq 1 ] || usage
+    id=$(find_window "$1") || { echo "ws-input: no visible window matches $1" >&2; exit 1; }
+    xdotool windowraise "$id" windowfocus --sync "$id"
+    echo "$id" ;;
+  key)
+    [ $# -ge 1 ] || usage
+    xdotool key --delay 60 "$@" ;;
+  type)
+    [ $# -eq 1 ] || usage
+    xdotool type --delay 40 -- "$1" ;;
+  move)
+    [ $# -eq 2 ] && [[ $1 =~ $int && $2 =~ $int ]] || usage
+    xdotool mousemove --sync "$1" "$2" ;;
+  click)
+    [ $# -ge 2 ] && [ $# -le 3 ] && [[ $1 =~ $int && $2 =~ $int && ${3:-1} =~ ^[1-9]$ ]] || usage
+    xdotool mousemove --sync "$1" "$2" click "${3:-1}" ;;
+  *) usage ;;
+esac

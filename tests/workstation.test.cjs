@@ -1,0 +1,142 @@
+// Perspective: an agent that claims a Linux workstation container to run and
+// inspect a GUI program without touching the host's screen, focus or pointer.
+// Invariant: ws-run gives the command a private X screen, returns its exit code
+// and records it in ws-run.json; a timeout or exit stops the command's whole
+// process group; an OOM kill is not reported as a timeout; ws-input and
+// ws-shot act on that private screen only.
+// Goal: keep the workstation entry contract that pool semantics build on honest.
+// Migration: needs Docker and a base image built from
+// templates/workstation/base, named by WORKSTATION_IMAGE; missing prerequisites
+// fail instead of skipping. Containers, Xvfb and XTEST input are all real.
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+const image = process.env.WORKSTATION_IMAGE;
+assert.ok(image, "Set WORKSTATION_IMAGE to an image built from templates/workstation/base (see templates/workstation/README.md).");
+assert.equal(spawnSync("docker", ["image", "inspect", image], { stdio: "ignore" }).status, 0, `Docker image ${image} is not available.`);
+const user = `${process.getuid()}:${process.getgid()}`;
+
+function outDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aidk-workstation-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function docker(args) {
+  const result = spawnSync("docker", args, { encoding: "utf8", timeout: 120000 });
+  if (result.error) throw result.error;
+  return result;
+}
+
+function run(out, args, extra = []) {
+  return docker(["run", "--rm", "--user", user, ...extra, "-v", `${out}:/ws/out`, image, ...args]);
+}
+
+function record(out, sub = "") {
+  return JSON.parse(fs.readFileSync(path.join(out, sub, "ws-run.json"), "utf8"));
+}
+
+function pngSize(file) {
+  const bytes = fs.readFileSync(file);
+  assert.equal(bytes.subarray(1, 4).toString("latin1"), "PNG", `${file} is not a PNG`);
+  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
+}
+
+function session(t, out) {
+  const name = `aidk-ws-test-${process.pid}-${Date.now()}`;
+  const started = docker(["run", "-d", "--name", name, "--user", user, "-v", `${out}:/ws/out`, image, "--screen", "640x480x24"]);
+  assert.equal(started.status, 0, started.stderr);
+  t.after(() => docker(["rm", "-f", name]));
+  const exec = command => docker(["exec", name, ...command]);
+  for (let i = 0; i < 100 && exec(["xdpyinfo"]).status !== 0; i++) spawnSync("sleep", ["0.1"]);
+  assert.equal(exec(["xdpyinfo"]).status, 0, "session screen did not come up");
+  return exec;
+}
+
+test("a batch run returns the command's code on a private screen and records it", t => {
+  const out = outDir(t);
+  const script = 'test "$DISPLAY" = :99 && xdpyinfo | grep -q "800x600 pixels" && test -w "$HOME" && exit 7';
+  const result = run(out, ["--screen", "800x600x24", "--shot", "final", "--", "bash", "-c", script, "--looks-like-a-flag"]);
+  assert.equal(result.status, 7, result.stderr);
+  const outcome = record(out);
+  assert.equal(outcome.exit, 7);
+  assert.equal(outcome.timed_out, false);
+  assert.equal(outcome.screen, "800x600x24");
+  assert.deepEqual(outcome.command, ["bash", "-c", script, "--looks-like-a-flag"]);
+  assert.equal(typeof outcome.duration_s, "number");
+  assert.equal(typeof outcome.container.memory_peak_bytes, "number");
+  assert.deepEqual(pngSize(path.join(out, "final.png")), [800, 600]);
+});
+
+test("a timeout stops the whole command group and is recorded as a timeout", t => {
+  const out = outDir(t);
+  const exec = session(t, out);
+  const result = exec(["ws-run", "--out", "/ws/out/slow", "--timeout", "1", "--",
+    "bash", "-c", "sleep 300 & echo $! > /ws/out/slow-child; sleep 300"]);
+  assert.equal(result.status, 124, result.stderr);
+  const outcome = record(out, "slow");
+  assert.equal(outcome.timed_out, true);
+  assert.ok(outcome.duration_s >= 1 && outcome.duration_s < 15, `duration ${outcome.duration_s}`);
+  const child = fs.readFileSync(path.join(out, "slow-child"), "utf8").trim();
+  assert.notEqual(exec(["kill", "-0", child]).status, 0, "background child survived the timeout");
+  assert.equal(exec(["xdpyinfo"]).status, 0, "the session screen must outlive one batch command");
+});
+
+test("background processes do not outlive a command that exits", t => {
+  const out = outDir(t);
+  const exec = session(t, out);
+  const result = exec(["ws-run", "--out", "/ws/out/quick", "--", "bash", "-c", "sleep 300 & echo $! > /ws/out/quick-child"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(record(out, "quick").timed_out, false);
+  const child = fs.readFileSync(path.join(out, "quick-child"), "utf8").trim();
+  assert.notEqual(exec(["kill", "-0", child]).status, 0, "background child survived its command");
+});
+
+test("injected keys and clicks reach the focused window on the private screen", t => {
+  const out = outDir(t);
+  const script = [
+    "set -e",
+    "xev -geometry 300x200+0+0 -event keyboard -event button > /ws/out/xev.log &",
+    'ws-input wait "Event Tester" 10 > /dev/null',
+    'ws-input focus "Event Tester" > /dev/null',
+    "ws-input key a ctrl+s Escape",
+    "ws-input click 50 60",
+    "sleep 0.5",
+    "ws-shot /ws/out/screen.png",
+  ].join("\n");
+  const result = run(out, ["--screen", "640x480x24", "--", "bash", "-c", script]);
+  assert.equal(result.status, 0, result.stderr);
+  const events = fs.readFileSync(path.join(out, "xev.log"), "utf8").split(/\n(?=\S)/);
+  const keys = events.filter(e => e.startsWith("KeyPress")).map(e => e.match(/keysym 0x[0-9a-f]+, (\w+)/)[1]);
+  assert.deepEqual(keys, ["a", "Control_L", "s", "Escape"]);
+  const clicks = events.filter(e => e.startsWith("ButtonPress"));
+  assert.equal(clicks.length, 1);
+  assert.match(clicks[0], /root:.*\(50,60\)/s);
+  assert.match(clicks[0], /button 1,/);
+  assert.deepEqual(pngSize(path.join(out, "screen.png")), [640, 480]);
+});
+
+test("an out-of-memory kill is reported as such, not as a timeout", t => {
+  const out = outDir(t);
+  const result = run(out, ["--timeout", "60", "--", "bash", "-c", "head -c 1G /dev/zero | tail > /dev/null"],
+    ["--memory", "64m", "--memory-swap", "64m"]);
+  assert.equal(result.status, 137, result.stderr);
+  const outcome = record(out);
+  assert.equal(outcome.timed_out, false);
+  assert.ok(outcome.container.oom_kills >= 1, `oom_kills ${outcome.container.oom_kills}`);
+});
+
+test("usage errors exit 2 without running anything", t => {
+  const out = outDir(t);
+  for (const args of [["--timeout", "soon", "--", "true"], ["--screen", "big", "--", "true"], ["--shot", "../x", "--", "true"]]) {
+    assert.equal(run(out, args).status, 2, args.join(" "));
+  }
+  assert.equal(fs.existsSync(path.join(out, "ws-run.json")), false);
+  assert.equal(docker(["run", "--rm", "--entrypoint", "ws-shot", image]).status, 2);
+  assert.equal(docker(["run", "--rm", "--entrypoint", "ws-input", image, "click", "x", "1"]).status, 2);
+});

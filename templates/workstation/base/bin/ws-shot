@@ -1,0 +1,14 @@
+#!/bin/bash
+# Save the container's virtual screen (or one of its windows) as a PNG. Reads
+# the X server on $DISPLAY only; it never sees the host's screen.
+#   ws-shot FILE.png [WINDOW-ID]
+set -euo pipefail
+[ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: ws-shot FILE.png [WINDOW-ID]" >&2; exit 2; }
+file=$1
+target=(-root)
+[ $# -eq 2 ] && target=(-id "$2")
+mkdir -p "$(dirname "$file")"
+tmp="$file.tmp.$$"
+trap 'rm -f "$tmp"' EXIT
+xwd "${target[@]}" -silent | xwdtopnm 2>/dev/null | pnmtopng >"$tmp"
+mv "$tmp" "$file"
