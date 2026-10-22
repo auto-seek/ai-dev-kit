@@ -218,3 +218,29 @@ test("a pool needing more memory than Docker has is refused before anything star
   assert.equal(result.code, 2);
   assert.match(result.stderr, /more than the [\d.]+ GiB Docker can use; lower slots or memory in .*workstations\.json, or give Docker more memory/);
 });
+
+test("status reports Docker's real disk; prune removes a stray workstation but never a held one", t => {
+  const p = pool(t);
+  const held = p.claim(["--label", "held"]);
+  const id = require("node:crypto").createHash("sha256").update(path.resolve(p.root)).digest("hex").slice(0, 8);
+  const stray = `aidk-ws-${id}-ws-1-stray0`;
+  assert.equal(docker(["run", "-d", "--name", stray, "--label", `ai-dev-kit.workstation=${id}/ws`, "--label", "ai-dev-kit.workstation.slot=1", image]).status, 0);
+  t.after(() => docker(["rm", "-f", stray]));
+  const report = JSON.parse(p.cli("status", ["--pool", "ws", "--json"]).stdout);
+  assert.ok(report.docker.disk.vm.free > 0 && report.docker.disk.vm.used > 0, JSON.stringify(report.docker.disk));
+  assert.match(report.docker.containers.find(row => row.name === held.workstation).writable, /^[\d.]+k?B|^[\d.]+[kMG]B$/);
+  assert.equal(report.docker.containers.find(row => row.name === stray).matches, false);
+  const pruned = p.cli("prune", ["--pool", "ws"]);
+  assert.equal(pruned.code, 0, pruned.stderr);
+  assert.match(pruned.stdout, new RegExp(`removed workstation ${stray} \\(running, held by no slot\\)`));
+  assert.equal(exists(stray), false);
+  assert.equal(exists(held.workstation), true);
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", held.token]).code, 0);
+});
+
+test("a claim needing more free disk than there is exits 75 before anything starts", t => {
+  const p = pool(t, { min_free_disk: "100000g" });
+  const result = p.cli("claim", ["--pool", "ws", "--wait", "0"]);
+  assert.equal(result.code, 75);
+  assert.match(result.stderr, /BLOCKED \(retryable\): pool ws needs 100000\.00 GiB free \(min_free_disk\) but Docker's disk has [\d.]+ GiB free and the host disk at .* has [\d.]+ GiB free/);
+});

@@ -60,7 +60,7 @@ const LABEL = "ai-dev-kit.workstation";
 const EVENTS = "reclaimed.jsonl";
 // c1 measured a 4K Godot Forward+ run at ~2.5 GB peak; three fit an 8 GB Docker VM.
 const POOL_DEFAULTS = {
-  slots: 3, cpus: 3, memory: "2.5g", screen: "1920x1080x24", user: "host",
+  slots: 3, cpus: 3, memory: "2.5g", screen: "1920x1080x24", user: "host", min_free_disk: "5g",
   timeout_seconds: 1800, max_hold_seconds: 3600, warn_hold_seconds: 1800,
 };
 const USAGE = `usage:
@@ -74,13 +74,15 @@ workstation pools (.ai-dev-kit/workstations.json):
   resource-lock.cjs renew --pool <pool> --token <token>
   resource-lock.cjs release --pool <pool> --token <token>
   resource-lock.cjs status --pool <pool> [--json] [--warn-hold <s>] [--no-docker]
+  resource-lock.cjs prune --pool <pool> [--dry-run] [--evidence-days <n>]
   resource-lock.cjs status [--json] [--warn-hold <s>]      (every lock and pool on this machine)
 common: --project <dir> (default cwd; state lives in its main checkout) | --root <dir> | --config <file>
-exit: run -> the command's code; 75 = still queued after --wait, nothing ran (retryable);
+exit: run -> the command's code; 75 = still queued after --wait, or too little free disk; nothing ran (retryable);
       2 = usage or configuration error; 1 = not held (release/renew) or Docker failure`;
 
 class UsageError extends Error {}
 class ConfigError extends Error {}
+class BlockedError extends Error {}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const rand = () => crypto.randomBytes(8).toString("hex");
 
@@ -93,20 +95,22 @@ function parse(argv) {
     "--name": "name", "--wait": "wait", "--label": "label", "--max-hold": "maxHold",
     "--token": "token", "--owner-pid": "ownerPid", "--root": "root", "--project": "project",
     "--pool": "pool", "--out": "out", "--timeout": "timeout", "--warn-hold": "warnHold", "--config": "config",
+    "--evidence-days": "evidenceDays",
   };
   for (let i = 0; i < flags.length; i++) {
     if (flags[i] === "--json") { options.json = true; continue; }
     if (flags[i] === "--no-docker") { options.noDocker = true; continue; }
+    if (flags[i] === "--dry-run") { options.dryRun = true; continue; }
     const key = valued[flags[i]];
     if (!key) throw new UsageError(`unknown option: ${flags[i]}`);
     if (i + 1 >= flags.length) throw new UsageError(`missing value for ${flags[i]}`);
     options[key] = flags[++i];
   }
-  if (!["run", "acquire", "release", "status", "claim", "renew"].includes(command)) throw new UsageError(`unknown command: ${command ?? "(none)"}`);
+  if (!["run", "acquire", "release", "status", "claim", "renew", "prune"].includes(command)) throw new UsageError(`unknown command: ${command ?? "(none)"}`);
   if (options.name !== undefined && options.pool !== undefined) throw new UsageError("use --name for an exclusive lock or --pool for a workstation pool, not both");
   if (options.pool !== undefined && !NAME.test(options.pool)) throw new UsageError("--pool must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}");
   const pooled = options.pool !== undefined;
-  if (["claim", "renew"].includes(command) && !pooled) throw new UsageError(`${command} requires --pool <pool>`);
+  if (["claim", "renew", "prune"].includes(command) && !pooled) throw new UsageError(`${command} requires --pool <pool>`);
   if (!pooled && !(command === "status" && options.name === undefined) && !NAME.test(options.name ?? "")) {
     throw new UsageError("--name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}");
   }
@@ -123,6 +127,8 @@ function parse(argv) {
   if (options.warnHold !== undefined && !(command === "status" && /^\d+$/.test(options.warnHold))) throw new UsageError("--warn-hold takes whole seconds and applies to status");
   if (options.out !== undefined && !(pooled && ["claim", "run"].includes(command))) throw new UsageError("--out applies to claim and run --pool");
   if (options.noDocker && command !== "status") throw new UsageError("--no-docker applies to status");
+  if ((options.dryRun || options.evidenceDays !== undefined) && command !== "prune") throw new UsageError("--dry-run and --evidence-days apply to prune");
+  if (options.evidenceDays !== undefined && !/^\d+$/.test(options.evidenceDays)) throw new UsageError("--evidence-days takes a whole number of days");
   return options;
 }
 
@@ -528,7 +534,7 @@ function loadConfig(base, options) {
 function poolSettings(name, raw, base, warnHoldS, fail) {
   const at = key => `pools.${name}.${key}`;
   if (!isObject(raw)) fail(`pools.${name} must be an object`);
-  onlyKeys(raw, ["image", "build", "slots", "cpus", "memory", "screen", "env", "mounts", "start", "user",
+  onlyKeys(raw, ["image", "build", "slots", "cpus", "memory", "screen", "env", "mounts", "start", "user", "min_free_disk",
     "timeout_seconds", "max_hold_seconds", "warn_hold_seconds"], `pools.${name}`, fail);
   const pool = { ...POOL_DEFAULTS, ...raw, name };
   if (typeof pool.image !== "string" || !/^[a-z0-9][\w./:@-]*$/i.test(pool.image)) fail(`${at("image")} must name a Docker image; add "build" to build it from a Dockerfile`);
@@ -548,6 +554,8 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
   pool.memoryBytes = memoryBytes(pool.memory);
   if (!(pool.memoryBytes >= 64 * UNITS.m)) fail(`${at("memory")} must be at least 64m, written like "2.5g" or "512m"`);
   if (typeof pool.screen !== "string" || !/^\d+x\d+x(8|16|24)$/.test(pool.screen)) fail(`${at("screen")} must look like 1920x1080x24`);
+  pool.minFreeDiskBytes = memoryBytes(pool.min_free_disk);
+  if (!(pool.minFreeDiskBytes >= 0)) fail(`${at("min_free_disk")} must be a size such as "5g" or "0"`);
   pool.env = raw.env ?? {};
   if (!isObject(pool.env) || Object.entries(pool.env).some(([key, value]) => !/^[A-Za-z_]\w*$/.test(key) || typeof value !== "string")) {
     fail(`${at("env")} must map variable names to strings`);
@@ -599,11 +607,13 @@ function dockerCapacity(config) {
   return { mem_total: memTotal, cpus, need, problems };
 }
 
-function ensureImage(pool) {
+function ensureImage(ctx) {
+  const { pool } = ctx;
   if (docker(["image", "inspect", pool.image]).status === 0) return;
   if (!pool.build) throw new DockerError(`image ${pool.image} of pool ${pool.name} is not available locally; build it, or declare "build" for the pool`);
   process.stderr.write(`resource-lock: building ${pool.image} for pool ${pool.name}\n`);
-  const args = ["build", "-t", pool.image, "-f", pool.build.dockerfile];
+  // The label lets prune find superseded images this pool built, and only those.
+  const args = ["build", "-t", pool.image, "-f", pool.build.dockerfile, "--label", `${LABEL}.image=${ctx.id}/${pool.name}`];
   for (const [key, value] of Object.entries(pool.build.args)) args.push("--build-arg", `${key}=${value}`);
   // Build output goes to stderr so claim's stdout stays machine-readable.
   const result = spawnSync(DOCKER, [...args, pool.build.context], { stdio: ["ignore", 2, 2] });
@@ -622,14 +632,59 @@ function containerName(ctx, slot, token) {
   return `aidk-ws-${ctx.id}-${ctx.pool.name}-${slot}-${token.slice(-6)}`;
 }
 
-function poolContainers(id, pool, slot) {
+function poolContainers(id, pool, slot, withSize = false) {
   const filters = ["--filter", `label=${LABEL}=${id}/${pool}`];
   if (slot !== undefined) filters.push("--filter", `label=${LABEL}.slot=${slot}`);
-  const format = `{{.Names}}\t{{.State}}\t{{.Label "${LABEL}.slot"}}\t{{.Label "${LABEL}.token"}}`;
-  return dockerOut(["ps", "-a", ...filters, "--format", format], "cannot list workstations").split("\n").filter(Boolean).map(line => {
-    const [name, state, slotLabel, token] = line.split("\t");
-    return { name, state, slot: slotLabel ? Number(slotLabel) : null, token: token || null };
-  });
+  const format = `{{.Names}}\t{{.State}}\t{{.Label "${LABEL}.slot"}}\t{{.Label "${LABEL}.token"}}${withSize ? "\t{{.Size}}" : ""}`;
+  return dockerOut(["ps", "-a", ...(withSize ? ["-s"] : []), ...filters, "--format", format], "cannot list workstations")
+    .split("\n").filter(Boolean).map(line => {
+      const [name, state, slotLabel, token, size] = line.split("\t");
+      // Size is "<writable layer> (virtual <with image>)"; only the first part is this container's own.
+      return { name, state, slot: slotLabel ? Number(slotLabel) : null, token: token || null, ...(withSize ? { writable: size.split(" (")[0] } : {}) };
+    });
+}
+
+// Actual use, never apparent file sizes: df of Docker's disk (seen from a
+// throwaway container), statfs of the host disk, allocated blocks of evidence.
+function vmDisk(image) {
+  const line = dockerOut(["run", "--rm", "--entrypoint", "df", image, "-Pk", "/"], "cannot read the free disk of Docker").trim().split("\n").pop();
+  const [, total, used, free] = line.split(/\s+/).map(Number);
+  return { total: total * 1024, used: used * 1024, free: free * 1024 };
+}
+
+function hostDisk(dir) {
+  let at = path.resolve(dir);
+  while (!fs.existsSync(at)) at = path.dirname(at);
+  const stat = fs.statfsSync(at);
+  return { path: at, total: stat.blocks * stat.bsize, free: stat.bavail * stat.bsize };
+}
+
+function allocated(dir, seen = new Set()) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    const stat = fs.lstatSync(file);
+    if (seen.has(`${stat.dev}:${stat.ino}`)) continue;
+    seen.add(`${stat.dev}:${stat.ino}`);
+    total += stat.blocks * 512;
+    if (entry.isDirectory()) total += allocated(file, seen);
+  }
+  return total;
+}
+
+// On Docker Desktop the VM disk is a sparse file on the host disk, so both need room.
+function checkDisk(ctx, options) {
+  const need = ctx.pool.minFreeDiskBytes;
+  if (!need) return;
+  const vm = vmDisk(ctx.pool.image);
+  const host = hostDisk(options.out ?? ctx.dir);
+  const short = [];
+  if (vm.free < need) short.push(`Docker's disk has ${gib(vm.free)} free`);
+  if (host.free < need) short.push(`the host disk at ${host.path} has ${gib(host.free)} free`);
+  if (short.length) {
+    throw new BlockedError(`pool ${ctx.pool.name} needs ${gib(need)} free (min_free_disk) but ${short.join(" and ")}; ` +
+      `free space (resource-lock.cjs prune --pool ${ctx.pool.name} removes unused workstations, old images and, with --evidence-days, old evidence) and retry; nothing ran`);
+  }
 }
 
 function worktree(options) {
@@ -795,7 +850,8 @@ async function claim(options) {
   const ctx = poolContext(options);
   const capacity = dockerCapacity(ctx.config);
   if (capacity.problems.length) throw new ConfigError(capacity.problems.join("; "));
-  ensureImage(ctx.pool);
+  ensureImage(ctx);
+  checkDisk(ctx, options);
   stateDir(ctx.base, "pools", ctx.pool.name, true);
   const project = worktree(options);
   const owner = options.ownerPid ? Number(options.ownerPid) : null;
@@ -829,7 +885,8 @@ async function runPool(options) {
   const ctx = poolContext(options);
   const capacity = dockerCapacity(ctx.config);
   if (capacity.problems.length) throw new ConfigError(capacity.problems.join("; "));
-  ensureImage(ctx.pool);
+  ensureImage(ctx);
+  checkDisk(ctx, options);
   stateDir(ctx.base, "pools", ctx.pool.name, true);
   const project = worktree(options);
   const argv = options.argv ?? [];
@@ -945,13 +1002,19 @@ function poolReport(base, name, config, options = {}) {
     slots, queue, recent: readEvents(dir, 5),
   };
   if (!pool) report.config_error = config ? `${config.file} declares no pool "${name}"` : options.configError ?? "no configuration";
+  const out = path.join(dir, "out");
+  report.evidence = { path: out, runs: list(out).length, allocated_bytes: fs.existsSync(out) ? allocated(out) : 0 };
   if (options.docker && config && pool) {
     try {
       const capacity = dockerCapacity(config);
-      const containers = poolContainers(projectId(base), name).map(row => ({
+      const containers = poolContainers(projectId(base), name, undefined, true).map(row => ({
         ...row, token: undefined, matches: row.slot !== null && records.get(row.slot)?.container === row.name,
       }));
-      report.docker = { mem_total: capacity.mem_total, need: capacity.need, problems: capacity.problems, containers };
+      const image = dockerOut(["image", "ls", "--filter", `reference=${pool.image}`, "--format", "{{.Size}}"], "cannot read the image size").trim().split("\n")[0] || null;
+      report.docker = {
+        mem_total: capacity.mem_total, need: capacity.need, problems: capacity.problems, containers,
+        disk: { vm: vmDisk(pool.image), host: hostDisk(dir), image: { name: pool.image, size: image }, min_free: pool.minFreeDiskBytes },
+      };
     } catch (error) { report.docker = { error: error.message }; }
   }
   return report;
@@ -1009,10 +1072,69 @@ function poolStatus(options) {
   }
   if (report.docker?.error) lines.push(`docker: ${report.docker.error}`);
   else if (report.docker) {
-    const strays = report.docker.containers.filter(row => !row.matches);
-    lines.push(`docker: pools may use ${gib(report.docker.need)} of ${gib(report.docker.mem_total)}; ${report.docker.containers.length} workstation container(s)` +
+    const { disk, containers } = report.docker;
+    const strays = containers.filter(row => !row.matches);
+    lines.push(`docker: pools may use ${gib(report.docker.need)} of ${gib(report.docker.mem_total)} memory; ${containers.length} workstation container(s)` +
       `${strays.length ? `, not held by any slot: ${strays.map(row => row.name).join(", ")}` : ""}`);
     for (const problem of report.docker.problems) lines.push(`docker: ${problem}`);
+    lines.push(`disk: Docker ${gib(disk.vm.used)} used, ${gib(disk.vm.free)} free; host ${gib(disk.host.free)} free at ${disk.host.path}; ` +
+      `claims need ${gib(disk.min_free)} free on both`);
+    lines.push(`  image ${disk.image.name}: ${disk.image.size ?? "not present"} (Docker's count, one copy for every workstation)`);
+    for (const row of containers) lines.push(`  workstation ${row.name}: ${row.writable} writable layer (${row.state})`);
+  }
+  lines.push(`  evidence ${report.evidence.path}: ${report.evidence.runs} run(s), ${gib(report.evidence.allocated_bytes)} allocated`);
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+// Removes what no holder uses: workstation containers that no slot names,
+// images this pool built that are not configured and not in a container, and
+// (only with --evidence-days) old evidence of claims no longer held. Volumes
+// are not touched; pools create none.
+function prune(options) {
+  const base = baseDir(options);
+  const id = projectId(base);
+  const dir = stateDir(base, "pools", options.pool, false);
+  let pool = null;
+  try { pool = loadConfig(base, options).pools[options.pool] ?? null; } catch (error) { if (!(error instanceof ConfigError)) throw error; }
+  const verb = options.dryRun ? "would remove" : "removed";
+  const before = { host: hostDisk(base), vm: pool ? vmDisk(pool.image) : null };
+  const lines = [];
+  // Containers first, then slot records: a slot record exists before its container.
+  const containers = poolContainers(id, options.pool);
+  const named = new Set([...readSlots(dir).values()].map(record => record.container));
+  for (const row of containers.filter(row => !named.has(row.name))) {
+    if (!options.dryRun) docker(["rm", "-f", row.name]);
+    lines.push(`${verb} workstation ${row.name} (${row.state}, held by no slot)`);
+  }
+  const built = dockerOut(["image", "ls", "--filter", `label=${LABEL}.image=${id}/${options.pool}`, "--format", "{{.Repository}}:{{.Tag}}"],
+    "cannot list workstation images").split("\n").filter(Boolean);
+  for (const image of built) {
+    if (image === pool?.image) continue;
+    if (dockerOut(["ps", "-a", "--filter", `ancestor=${image}`, "--format", "{{.Names}}"], "cannot list containers").trim()) {
+      lines.push(`kept image ${image}: a container still uses it`);
+      continue;
+    }
+    if (!options.dryRun) dockerOut(["image", "rm", image], `cannot remove image ${image}`);
+    lines.push(`${verb} image ${image} (built for this pool, no longer configured)`);
+  }
+  if (options.evidenceDays !== undefined) {
+    const out = path.join(dir, "out");
+    const live = new Set(scan(dir, false).tickets.filter(entry => !entry.stale).map(entry => entry.token));
+    const cutoff = Date.now() - Number(options.evidenceDays) * 86400000;
+    for (const token of list(out)) {
+      const file = path.join(out, token);
+      const stat = statQuiet(file);
+      if (!stat?.isDirectory() || live.has(token) || stat.mtimeMs > cutoff) continue;
+      const size = allocated(file);
+      if (!options.dryRun) fs.rmSync(file, { recursive: true, force: true });
+      lines.push(`${verb} evidence ${file} (${gib(size)} allocated)`);
+    }
+  }
+  if (!lines.length) lines.push(`pool ${options.pool}: nothing to remove`);
+  if (!options.dryRun) {
+    const host = hostDisk(base), vm = pool ? vmDisk(pool.image) : null;
+    lines.push(`free disk: host ${gib(before.host.free)} -> ${gib(host.free)}` +
+      `${vm ? `, Docker ${gib(before.vm.free)} -> ${gib(vm.free)}` : ""} (other processes also change these)`);
   }
   process.stdout.write(`${lines.join("\n")}\n`);
 }
@@ -1066,6 +1188,7 @@ async function main() {
   if (options.command === "release") return pooled ? releasePool(options) : release(options);
   if (options.command === "claim") return claim(options);
   if (options.command === "renew") return renew(options);
+  if (options.command === "prune") return prune(options);
   return status(options);
 }
 
@@ -1073,6 +1196,10 @@ module.exports = { overview, renderOverview };
 
 if (require.main === module) {
   main().catch(error => {
+    if (error instanceof BlockedError) {
+      process.stderr.write(`resource-lock: BLOCKED (retryable): ${error.message}\n`);
+      process.exit(BLOCKED);
+    }
     process.stderr.write(`resource-lock: ${error.message}\n`);
     if (error instanceof UsageError) process.stderr.write(`${USAGE}\n`);
     process.exit(error instanceof UsageError || error instanceof ConfigError ? 2 : 1);

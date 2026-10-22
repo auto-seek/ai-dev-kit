@@ -112,6 +112,30 @@ a new container.
 - `--memory-swap` equals `--memory`, so a runaway run is killed and reported
   instead of swapping the shared VM.
 
+## Disk
+
+Measured on an Apple M4 with Docker Desktop (8 GB VM), Godot 4.7.1 .NET and a
+project with 1.6 GB of assets and a 720 MB import cache, running three 4K
+`--panels` captures at once from three checkouts:
+
+| What | Real disk |
+| --- | --- |
+| Example image (base + Godot + .NET + Mesa) | 1.81 GB once, shared by every workstation |
+| Three running workstations | +12 MiB on Docker's disk (about 4 MB writable layer each), back to zero after release |
+| Assets and import cache inside Docker | nothing: the checkout is bind-mounted |
+| Second checkout's assets and import cache, cloned with `cp -c -R` (APFS) | +1.5 MiB (apparent size 2.3 GB) |
+| A checkout's C# `bin`/`obj` and `.godot/mono` | about 54 MiB |
+| Evidence of one 4K `--panels` run (20 PNGs) | 174 MiB on the host |
+
+`du` counts cloned files at full size, so measure with `df` deltas or the
+pool's status, which reports actual use. Godot's import output was
+byte-identical on macOS (Metal editor) and in the container (417 of 417
+assets), a cloned import cache was accepted without re-importing (4 s instead
+of 56 s), and a host import and a container import of the same checkout at the
+same time finished with a cache identical to a single import. A running game
+wrote nothing into the checkout's `.godot`. Workstations therefore use the
+checkout's own `.godot`; there is no separate cache volume to manage.
+
 ## Godot example
 
 ```bash

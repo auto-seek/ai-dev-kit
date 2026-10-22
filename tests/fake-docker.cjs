@@ -5,16 +5,22 @@
 // commands against real Docker. NOT a production tool.
 //
 // State lives in $FAKE_DOCKER_STATE: containers/<name>.json, images.txt (one
-// image per line) and calls.log (one JSON argv per call).
+// image per line, optionally "<image>\t<label k=v>") and calls.log (one JSON
+// argv per call).
 //   info --format "{{.MemTotal}} {{.NCPU}}"   prints $FAKE_DOCKER_MEMTOTAL (default
 //                                           8218034176, an 8 GB VM) and $FAKE_DOCKER_NCPU (10)
 //   image inspect <image>                    exit 0 when listed in images.txt
-//   build -t <image> ...                     appends <image> to images.txt
+//   image ls --filter reference=<i>|label=<k=v> --format F   "1.81GB" per reference match,
+//                                           "<image>" per label match
+//   image rm <image>                         removes it from images.txt
+//   build -t <image> [--label k=v] ...       appends <image> (and its label) to images.txt
+//   run --rm --entrypoint df <image> -Pk /   df output with $FAKE_DOCKER_DISK_FREE_KB free (default 400 GiB)
 //   run -d --name <n> [--label k=v]... ... <image> [args]   creates <n>; a used name exits 125
 //   exec <n> xdpyinfo                        exit 0 while <n> exists
 //   exec <n> ws-run [options] -- <cmd...>    runs <cmd...> on the host with WS_CONTAINER=<n>
 //   rm -f <n>...                             removes the named containers
-//   ps -a [--filter label=k=v]... --format F prints "name\trunning\t<slot label>\t<token label>"
+//   ps -a [-s] [--filter label=k=v|ancestor=<i>]... --format F
+//                                           prints "name\trunning\t<slot label>\t<token label>[\t4.05MB (virtual 1.34GB)]"
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -27,9 +33,10 @@ const containers = path.join(state, "containers");
 fs.mkdirSync(containers, { recursive: true });
 fs.appendFileSync(path.join(state, "calls.log"), `${JSON.stringify(args)}\n`);
 const file = name => path.join(containers, `${name}.json`);
-const images = () => { try { return fs.readFileSync(path.join(state, "images.txt"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
+const imageLines = () => { try { return fs.readFileSync(path.join(state, "images.txt"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
+const images = () => imageLines().map(line => line.split("\t")[0]);
 const fail = (code, message) => { process.stderr.write(`${message}\n`); process.exit(code); };
-const VALUED = new Set(["--name", "--label", "--cpus", "--memory", "--memory-swap", "-e", "--user", "-v", "-w", "--filter", "--format", "-t", "-f", "--build-arg"]);
+const VALUED = new Set(["--name", "--label", "--cpus", "--memory", "--memory-swap", "-e", "--user", "-v", "-w", "--filter", "--format", "-t", "-f", "--build-arg", "--entrypoint"]);
 
 function options(list) {
   const found = { labels: {}, filters: [], rest: [] };
@@ -50,15 +57,37 @@ switch (command) {
   case "info":
     process.stdout.write(`${process.env.FAKE_DOCKER_MEMTOTAL || "8218034176"} ${process.env.FAKE_DOCKER_NCPU || "10"}\n`);
     break;
-  case "image":
-    if (rest[0] !== "inspect") fail(2, `fake-docker: unsupported image ${rest[0]}`);
-    if (!images().includes(rest[1])) fail(1, `Error: No such image: ${rest[1]}`);
+  case "image": {
+    const [verb, ...more] = rest;
+    if (verb === "inspect") { if (!images().includes(more[0])) fail(1, `Error: No such image: ${more[0]}`); break; }
+    if (verb === "rm") {
+      const keep = imageLines().filter(line => line.split("\t")[0] !== more[0]);
+      fs.writeFileSync(path.join(state, "images.txt"), keep.map(line => `${line}\n`).join(""));
+      process.stdout.write(`Untagged: ${more[0]}\n`);
+      break;
+    }
+    if (verb !== "ls") fail(2, `fake-docker: unsupported image ${verb}`);
+    for (const filter of options(more).filters) {
+      if (filter.startsWith("reference=") && images().includes(filter.slice(10))) process.stdout.write("1.81GB\n");
+      if (filter.startsWith("label=")) {
+        for (const line of imageLines()) if (line.split("\t")[1] === filter.slice(6)) process.stdout.write(`${line.split("\t")[0]}\n`);
+      }
+    }
     break;
-  case "build":
-    fs.appendFileSync(path.join(state, "images.txt"), `${options(rest)["-t"]}\n`);
+  }
+  case "build": {
+    const found = options(rest);
+    const label = Object.entries(found.labels).map(([key, value]) => `${key}=${value}`)[0];
+    fs.appendFileSync(path.join(state, "images.txt"), `${found["-t"]}${label ? `\t${label}` : ""}\n`);
     break;
+  }
   case "run": {
     const found = options(rest);
+    if (found["--rm"] && found["--entrypoint"] === "df") {
+      const total = 474095688, free = Number(process.env.FAKE_DOCKER_DISK_FREE_KB || 419430400);
+      process.stdout.write(`Filesystem 1024-blocks Used Available Capacity Mounted on\noverlay ${total} ${total - free} ${free} 3% /\n`);
+      break;
+    }
     const [image, ...cmd] = found.rest;
     if (!images().includes(image)) fail(125, `Unable to find image '${image}' locally`);
     try {
@@ -84,13 +113,18 @@ switch (command) {
     }
     break;
   case "ps": {
-    const wanted = options(rest).filters.map(filter => filter.replace(/^label=/, ""));
+    const found = options(rest);
     for (const entry of fs.readdirSync(containers)) {
       let data;
       try { data = JSON.parse(fs.readFileSync(path.join(containers, entry), "utf8")); } catch { continue; }
-      const match = wanted.every(pair => { const at = pair.indexOf("="); return data.labels[pair.slice(0, at)] === pair.slice(at + 1); });
+      const match = found.filters.every(filter => {
+        if (filter.startsWith("ancestor=")) return data.image === filter.slice(9);
+        const pair = filter.replace(/^label=/, ""), at = pair.indexOf("=");
+        return data.labels[pair.slice(0, at)] === pair.slice(at + 1);
+      });
       if (match) {
-        process.stdout.write(`${data.name}\trunning\t${data.labels["ai-dev-kit.workstation.slot"] ?? ""}\t${data.labels["ai-dev-kit.workstation.token"] ?? ""}\n`);
+        process.stdout.write(`${data.name}\trunning\t${data.labels["ai-dev-kit.workstation.slot"] ?? ""}\t${data.labels["ai-dev-kit.workstation.token"] ?? ""}` +
+          `${found["-s"] ? "\t4.05MB (virtual 1.34GB)" : ""}\n`);
       }
     }
     break;

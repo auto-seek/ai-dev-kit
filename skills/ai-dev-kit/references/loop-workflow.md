@@ -428,8 +428,8 @@ checkout (relative paths resolve against the project root):
 - `image` is required; `build` builds it when it is missing (bump the tag when
   the Dockerfile changes). `start` is the argv every run begins with. Defaults are
   3 slots of 3 CPUs and 2.5g each (three 4K Godot runs fit an 8 GB Docker VM),
-  `screen` 1920x1080x24, `user` `"host"` (run as your uid), `timeout_seconds`
-  1800, `max_hold_seconds` 3600, `warn_hold_seconds` 1800.
+  `screen` 1920x1080x24, `user` `"host"` (run as your uid), `min_free_disk` 5g,
+  `timeout_seconds` 1800, `max_hold_seconds` 3600, `warn_hold_seconds` 1800.
 - A claim exits 2 with the numbers when slots × memory over all pools exceeds the
   memory Docker can use, or `cpus` exceeds Docker's CPUs; other configuration
   errors also exit 2 and name the setting.
@@ -470,6 +470,27 @@ node "<kit>/scripts/resource-lock.cjs" release --pool godot --token "$token"
   Docker's memory fit and containers that no slot holds. `status` without
   `--name`/`--pool`, and `skill-first-gate.sh --phase status`, list every lock and
   pool of the project on this machine. Nothing is reported to the center.
+- Disk: workstations share the image and bind-mount the agent's own checkout, so
+  assets and engine import caches are never copied into Docker; each running
+  workstation adds only its writable layer (about 4 MB measured for a 4K Godot
+  run). Before a claim, `claim` and `run` check that Docker's disk and the host
+  disk both have `min_free_disk` free (on Docker Desktop the VM disk is a sparse
+  file on the host disk) and otherwise exit 75 without a ticket. `status --pool`
+  shows Docker's used and free space, the image, each workstation's writable
+  layer and the evidence directories' allocated size, all as actual use (df,
+  allocated blocks), not apparent file sizes.
+- `prune --pool <pool> [--dry-run] [--evidence-days <n>]` removes workstation
+  containers that no slot holds, images the pool built (`build`) that are no
+  longer configured and no container uses, and, with `--evidence-days`, evidence
+  directories of claims that are no longer held and older than n days. It never
+  removes a held workstation, an image it did not build, or project files;
+  clean checkouts and build output with the project's own tools.
+- Checkouts: a new checkout does not need its own engine import. Clone the
+  import cache of an already-imported checkout of the same asset version
+  copy-on-write (`cp -c -R` on APFS, `cp --reflink=always -R` on Btrfs/XFS) and
+  let the engine verify it; measured for Godot 4.7: macOS and Linux imports are
+  byte-identical, the clone costs about 1 MiB of real disk, and the follow-up
+  import finishes in about 4 s without rewriting anything.
 
 ### Exit 75 means BLOCKED (retryable)
 

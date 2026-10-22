@@ -21,8 +21,15 @@ lockstep — see the Release Convention in `CLAUDE.md`.
   unchanged and independent of pools.
 - `resource-lock.cjs status --pool <pool>` shows each workstation's holder, hold
   time, lease, waiters and their wait, a configurable long-hold reminder, recent
-  reclaims and Docker's memory fit; `status` without a name lists every lock and
-  pool of the project.
+  reclaims, Docker's memory fit and actual disk use (Docker's and the host's
+  free space, the image, each workstation's writable layer, evidence size);
+  `status` without a name lists every lock and pool of the project.
+- `claim` and `run --pool` check that Docker's disk and the host disk both have
+  the pool's `min_free_disk` (default 5g) free and otherwise exit 75 before
+  anything starts. `resource-lock.cjs prune --pool <pool>` removes workstation
+  containers no slot holds, images the pool built that are no longer configured,
+  and, with `--evidence-days`, old evidence of claims no longer held; it never
+  touches held workstations or project files.
 
 ### Changed
 - `skill-first-gate.sh --phase status` also lists the project's locks and

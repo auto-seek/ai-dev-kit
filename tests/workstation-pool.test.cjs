@@ -129,7 +129,7 @@ test("a burst of runs shares three workstations without ever giving one to two r
   }
   assert.equal(f.events().length, ids.length * 2);
   assert.ok(most >= 2 && most <= 3, `at most three, and runs did overlap (${most})`);
-  const started = f.calls().filter(call => call[0] === "run").map(call => call[call.indexOf("--name") + 1]);
+  const started = f.calls().filter(call => call[0] === "run" && call.includes("-d")).map(call => call[call.indexOf("--name") + 1]);
   assert.equal(new Set(started).size, ids.length, "each run gets a new container");
   assert.deepEqual(f.containers(), [], "release removes every container");
   assert.deepEqual(f.poolFiles(), []);
@@ -375,7 +375,7 @@ test("configuration errors exit 2 with a clear message and claim nothing", async
   f.writeConfig({});
   const defaults = f.cli("claim", ["--pool", "ws"]);
   assert.equal(defaults.code, 0, `the defaults (3 × 2.5 GiB) fit an 8 GB Docker VM: ${defaults.stderr}`);
-  const started = f.calls().filter(call => call[0] === "run").pop();
+  const started = f.calls().filter(call => call[0] === "run" && call.includes("-d")).pop();
   assert.deepEqual(["--cpus", "--memory", "--memory-swap"].map(flag => started[started.indexOf(flag) + 1]), ["3", "2684354560", "2684354560"]);
   assert.ok(started.includes("LP_NUM_THREADS=3"));
   f.cli("release", ["--pool", "ws", "--token", claimed(defaults).token]);
@@ -390,4 +390,83 @@ test("configuration errors exit 2 with a clear message and claim nothing", async
   assert.equal(built.code, 0, built.stderr);
   assert.ok(f.calls().some(call => call[0] === "build" && call.includes("built:1") && call.includes(path.join(f.root, "Dockerfile"))));
   f.cli("release", ["--pool", "ws", "--token", claimed(built).token]);
+});
+
+test("a claim is refused before anything starts when Docker's or the host's free disk is short", async t => {
+  const f = fixture(t, { slots: 1, min_free_disk: "5g" });
+  const low = f.cli("claim", ["--pool", "ws", "--wait", "0"], { FAKE_DOCKER_DISK_FREE_KB: String(2 * 1024 * 1024) });
+  assert.equal(low.code, 75);
+  assert.match(low.stderr, /BLOCKED \(retryable\): pool ws needs 5\.00 GiB free \(min_free_disk\) but Docker's disk has 2\.00 GiB free; free space \(resource-lock\.cjs prune --pool ws/);
+  assert.equal(fs.existsSync(path.join(f.root, ".ai-dev-kit", "pools", "ws")), false, "no ticket, no state");
+  assert.deepEqual(f.containers(), []);
+  f.writeConfig({ slots: 1, min_free_disk: "100000g" });
+  const host = f.cli("run", ["--pool", "ws", "--", f.log, "never", "0"]);
+  assert.equal(host.code, 75);
+  assert.match(host.stderr, /the host disk at .* has [\d.]+ GiB free/);
+  assert.deepEqual(f.events(), []);
+  f.writeConfig({ slots: 1, min_free_disk: "0" });
+  const earlier = f.calls().length;
+  const unchecked = f.cli("claim", ["--pool", "ws"], { FAKE_DOCKER_DISK_FREE_KB: "1" });
+  assert.equal(unchecked.code, 0, "min_free_disk 0 turns the check off");
+  assert.ok(!f.calls().slice(earlier).some(call => call.includes("--entrypoint")));
+  f.cli("release", ["--pool", "ws", "--token", claimed(unchecked).token]);
+});
+
+test("prune removes only workstations no slot holds, superseded images the pool built, and old unheld evidence", async t => {
+  const f = fixture(t, { slots: 2 });
+  fs.writeFileSync(path.join(f.root, "Dockerfile"), "FROM scratch\n");
+  f.writeConfig({ slots: 2, image: "built:2", build: { dockerfile: "Dockerfile" } });
+  const held = claimed(f.cli("claim", ["--pool", "ws", "--label", "held"]));
+  const label = fs.readFileSync(path.join(f.dockerState, "images.txt"), "utf8").split("\n").find(line => line.startsWith("built:2\t")).split("\t")[1];
+  assert.match(label, /^ai-dev-kit\.workstation\.image=[0-9a-f]{8}\/ws$/);
+  fs.appendFileSync(path.join(f.dockerState, "images.txt"), `built:1\t${label}\nother:1\n`);
+  const project = label.split("=")[1].split("/")[0];
+  const stray = `aidk-ws-${project}-ws-1-dead00`;
+  fs.writeFileSync(path.join(f.dockerState, "containers", `${stray}.json`), JSON.stringify({
+    name: stray, image: "built:2", labels: { "ai-dev-kit.workstation": `${project}/ws`, "ai-dev-kit.workstation.slot": "1" },
+  }));
+  const out = path.join(f.root, ".ai-dev-kit", "pools", "ws", "out");
+  const old = path.join(out, "000000000009-0123456789abcdef");
+  fs.mkdirSync(old);
+  fs.writeFileSync(path.join(old, "shot.png"), Buffer.alloc(100000));
+  const tenDaysAgo = new Date(Date.now() - 10 * 86400000);
+  fs.utimesSync(old, tenDaysAgo, tenDaysAgo);
+  fs.utimesSync(path.join(out, held.token), tenDaysAgo, tenDaysAgo);
+
+  const dry = f.cli("prune", ["--pool", "ws", "--dry-run", "--evidence-days", "7"]);
+  assert.equal(dry.code, 0, dry.stderr);
+  assert.match(dry.stdout, new RegExp(`would remove workstation ${stray} \\(running, held by no slot\\)`));
+  assert.match(dry.stdout, /would remove image built:1 \(built for this pool, no longer configured\)/);
+  assert.match(dry.stdout, /would remove evidence .*000000000009-0123456789abcdef/);
+  assert.ok(f.containers().includes(stray) && fs.existsSync(old));
+
+  const pruned = f.cli("prune", ["--pool", "ws", "--evidence-days", "7"]);
+  assert.equal(pruned.code, 0, pruned.stderr);
+  assert.deepEqual(f.containers(), [held.workstation], "the held workstation stays");
+  const images = fs.readFileSync(path.join(f.dockerState, "images.txt"), "utf8");
+  assert.ok(!images.includes("built:1") && images.includes("built:2") && images.includes("other:1"), images);
+  assert.equal(fs.existsSync(old), false);
+  assert.equal(fs.existsSync(path.join(out, held.token)), true, "evidence of a held claim stays, however old");
+  assert.match(pruned.stdout, /^free disk: host [\d.]+ GiB -> [\d.]+ GiB, Docker [\d.]+ GiB -> [\d.]+ GiB/m);
+  assert.match(f.cli("prune", ["--pool", "ws"]).stdout, /^pool ws: nothing to remove$/m);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", held.token]).code, 0);
+});
+
+test("status reports actual disk use: Docker and host free space, image, writable layers and evidence", async t => {
+  const f = fixture(t, { slots: 1 });
+  const held = claimed(f.cli("claim", ["--pool", "ws"]));
+  fs.writeFileSync(path.join(held.out, "shot.png"), Buffer.alloc(200000));
+  const report = f.status();
+  assert.equal(report.docker.disk.vm.free, 419430400 * 1024);
+  assert.ok(report.docker.disk.host.free > 0);
+  assert.equal(report.docker.disk.image.size, "1.81GB");
+  assert.equal(report.docker.containers[0].writable, "4.05MB");
+  assert.equal(report.evidence.runs, 1);
+  assert.ok(report.evidence.allocated_bytes >= 200000, JSON.stringify(report.evidence));
+  const text = f.cli("status", ["--pool", "ws"]).stdout;
+  assert.match(text, /^disk: Docker [\d.]+ GiB used, 400\.00 GiB free; host [\d.]+ GiB free at .*; claims need 5\.00 GiB free on both$/m);
+  assert.match(text, /^ {2}image ws-image:test: 1\.81GB \(Docker's count, one copy for every workstation\)$/m);
+  assert.match(text, new RegExp(`^ {2}workstation ${held.workstation}: 4\\.05MB writable layer \\(running\\)$`, "m"));
+  assert.match(text, /^ {2}evidence .*: 1 run\(s\), 0\.00 GiB allocated$/m);
+  f.cli("release", ["--pool", "ws", "--token", held.token]);
 });
