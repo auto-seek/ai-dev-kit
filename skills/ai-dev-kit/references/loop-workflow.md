@@ -430,6 +430,11 @@ checkout (relative paths resolve against the project root):
   3 slots of 3 CPUs and 2.5g each (three 4K Godot runs fit an 8 GB Docker VM),
   `screen` 1920x1080x24, `user` `"host"` (run as your uid), `min_free_disk` 5g,
   `timeout_seconds` 1800, `max_hold_seconds` 3600, `warn_hold_seconds` 1800.
+- The 2.5g default covers running, not building. A Godot .NET project that ran
+  `dotnet build`, the first import and a 1080p run inside one 2.5g container
+  was OOM-killed at the limit; with 4g the same build and run peaked at 2.05 GiB.
+  Either build and import on the host and only run in workstations, or raise
+  `memory` and lower `slots` so slots × memory still fits Docker's memory.
 - A claim exits 2 with the numbers when slots × memory over all pools exceeds the
   memory Docker can use, or `cpus` exceeds Docker's CPUs; other configuration
   errors also exit 2 and name the setting.

@@ -8,6 +8,12 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Changed
+- `references/loop-workflow.md` notes that the 2.5g workstation default covers
+  running, not building: a measured `dotnet build`, first import and run in one
+  2.5g container was OOM-killed. Build on the host, or raise `memory` and lower
+  `slots`.
+
 ## [0.20.0] - 2026-10-22
 
 ### Added
