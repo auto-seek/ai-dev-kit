@@ -825,12 +825,16 @@ async function startWorkstation(ctx, slot, container, token, out, project) {
   throw new DockerError(`workstation ${container} started but its screen did not answer within 10s`);
 }
 
-// Undo a claim that did not complete, or release one that did.
+// Undo a claim that did not complete, or release one that did. Refreshing the
+// ticket first keeps it from being reclaimed, and its slot freed and handed to
+// another holder, between the token check and the unlink; a ticket already
+// reclaimed leaves its slot file to freeOrphans.
 function giveBack(ctx, token, assigned) {
+  const ours = touch(path.join(ctx.dir, `${token}.json`));
   if (assigned) {
     try { docker(["rm", "-f", assigned.container]); } catch (error) { process.stderr.write(`resource-lock: ${error.message}\n`); }
     const file = path.join(ctx.dir, `slot-${assigned.slot}.json`);
-    if (readJson(file)?.token === token) unlinkQuiet(file);
+    if (ours && readJson(file)?.token === token) unlinkQuiet(file);
   }
   removeTicket(ctx.dir, token);
 }
