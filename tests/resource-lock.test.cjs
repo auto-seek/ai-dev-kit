@@ -97,7 +97,8 @@ function fixture(t) {
 
 test("three queued runners hold the resource one at a time in arrival order; status reports them", async t => {
   const f = fixture(t);
-  const a = f.runWorker("A", 700);
+  // A must still hold when both text and JSON status are read under heavy load.
+  const a = f.runWorker("A", 3000);
   await waitFor(() => f.status().holder?.state === "holding", "A to hold");
   const b = f.runWorker("B", 100);
   await waitFor(() => f.status().queue.length === 1, "B to queue");
