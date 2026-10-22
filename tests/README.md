@@ -15,6 +15,7 @@ npm run test:team # real process groups, project validation and shell cancellati
 bash tests/run-gate-tests.sh
 CASCADE_BIN=/absolute/path/to/cascade npm run test:integration
 CASCADE_PYTHON=/absolute/path/to/cascade-0.8.1/bin/python npm run test:portal-integration
+WORKSTATION_IMAGE=ai-dev-kit/workstation-base:local npm run test:workstation
 ```
 
 `npm run build` runs the fast suite as its final step, so the pre-commit gate
@@ -112,6 +113,12 @@ No Cascade executable or test-framework plugin is needed for this suite.
   (acquire/renew/release CAS, mutual exclusion, clean handoff, unreachable-redis
   failure). Kept out of the default suite because it needs `redis-server` +
   the redis Python client; missing dependencies fail instead of skipping.
+- **`workstation.test.cjs`** (`npm run test:workstation`) — the Linux workstation
+  entry contract in `templates/workstation/base` with real containers, Xvfb and
+  XTEST input: exit-code passthrough and `ws-run.json`, timeout stopping the whole
+  command group, no surviving background children, injected keys and clicks
+  reaching the focused window, OOM kills not reported as timeouts, usage errors.
+  Needs Docker and a base image named by `WORKSTATION_IMAGE`; fails without them.
 
 ## Coverage
 

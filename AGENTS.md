@@ -31,7 +31,8 @@ scripts/
 templates/
 ├── adapters/              # codex, claude, generic hook contract
 ├── profiles/              # generated profile shape
-└── workflow/              # ledger, findings, doc registry templates
+├── workflow/              # ledger, findings, doc registry templates
+└── workstation/           # Linux GUI workstation container skeleton and example layer
 ```
 
 ## Design Rules

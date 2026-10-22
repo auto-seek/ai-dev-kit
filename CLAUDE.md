@@ -47,7 +47,8 @@ scripts/
 templates/
 ├── adapters/              # codex/, claude/, generic/ hook wiring; generic/ holds the cross-harness hook contract
 ├── profiles/              # profile.yml shape
-└── workflow/              # LEDGER, findings, doc registry templates copied into projects
+├── workflow/              # LEDGER, findings, doc registry templates copied into projects
+└── workstation/           # Linux GUI workstation container: generic base image + example project layer
 ```
 
 The workflow skills do not duplicate logic; they point at `skills/ai-dev-kit/references/*.md`. Behavior changes belong in the references, not the workflow-skill wrappers.
