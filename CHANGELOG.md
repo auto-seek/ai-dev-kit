@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-22
+
 ### Added
 - `scripts/resource-lock.cjs` workstation pools: projects declare Docker
   workstations in `.ai-dev-kit/workstations.json` (image or Dockerfile, count,
