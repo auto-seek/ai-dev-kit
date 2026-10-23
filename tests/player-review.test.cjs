@@ -270,6 +270,16 @@ test("an invalid player_review contract fails the gate with the setting named", 
   assert.match(f.gate("preflight", 2), /player_review.paths entries must be a literal repository-relative file/);
 });
 
+test("a project without a gate contract gets the project gate's report, not a player review failure", t => {
+  const f = fixture(t);
+  f.git("rm", "-q", ".ai-dev-kit/gate-contract.json");
+  f.commit("no contract");
+  assert.equal(f.review(["check", "--phase", "merge"]), "");
+  const preflight = f.gate("preflight", 2);
+  assert.match(preflight, /gate-contract\.json is required/);
+  assert.doesNotMatch(preflight, /^(FAIL|WARN): player review|player-review: /m);
+});
+
 test("prune keeps a filed review's evidence until keep_until and removes it after", t => {
   const f = fixture(t);
   f.write("game/menu.txt", "Start Game\n");

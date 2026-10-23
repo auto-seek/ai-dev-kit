@@ -392,6 +392,9 @@ function evaluate(project) {
 }
 
 function check(options) {
+  // The project gate loads the same contract and reports its errors; failing
+  // here first would name the player review as the cause and hide that report.
+  try { settings(options.project); } catch { return 0; }
   const result = evaluate(options.project);
   if (!result.required || result.state === "passed") {
     if (result.state === "passed") process.stdout.write(`player review: passed — ${result.detail}\n`);
