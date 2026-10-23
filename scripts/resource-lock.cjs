@@ -912,7 +912,7 @@ async function startWorkstation(ctx, slot, container, token, out, project) {
   for (const mount of pool.mounts) if (!fs.existsSync(mount.source)) throw new ConfigError(`pool ${pool.name} mounts ${mount.source}, which does not exist`);
   // Leftovers of this slot whose removal failed earlier.
   for (const row of poolContainers(ctx.id, pool.name, slot)) docker(["rm", "-f", row.name]);
-  const env = { LP_NUM_THREADS: String(Math.max(1, Math.floor(pool.cpus))), ...pool.env };
+  const env = { LP_NUM_THREADS: String(Math.max(1, Math.floor(pool.cpus))), WS_SCREEN: pool.screen, ...pool.env };
   const args = ["run", "-d", "--name", container,
     "--label", `${LABEL}=${ctx.id}/${pool.name}`, "--label", `${LABEL}.slot=${slot}`, "--label", `${LABEL}.token=${token}`,
     "--cpus", String(pool.cpus), "--memory", String(pool.memoryBytes), "--memory-swap", String(pool.memoryBytes)];

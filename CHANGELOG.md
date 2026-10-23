@@ -8,6 +8,12 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Fixed
+- `ws-run` in a pool workstation recorded the default screen
+  (`1920x1080x24`) in `ws-run.json` instead of the workstation's own: batch
+  mode now reads the running screen's geometry, and pool containers get
+  `WS_SCREEN`.
+
 ## [0.21.1] - 2026-10-22
 
 ### Fixed

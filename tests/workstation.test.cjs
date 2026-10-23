@@ -83,6 +83,7 @@ test("a timeout stops the whole command group and is recorded as a timeout", t =
   assert.equal(result.status, 124, result.stderr);
   const outcome = record(out, "slow");
   assert.equal(outcome.timed_out, true);
+  assert.equal(outcome.screen, "640x480x24", "a batch run in a session records the session's screen");
   assert.ok(outcome.duration_s >= 1 && outcome.duration_s < 15, `duration ${outcome.duration_s}`);
   const child = fs.readFileSync(path.join(out, "slow-child"), "utf8").trim();
   assert.notEqual(exec(["kill", "-0", child]).status, 0, "background child survived the timeout");

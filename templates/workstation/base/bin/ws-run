@@ -65,6 +65,9 @@ if ! xdpyinfo >/dev/null 2>&1; then
     sleep 0.1
   done
   xdpyinfo >/dev/null 2>&1 || { stop_xvfb; echo "ws-run: Xvfb did not answer on $DISPLAY" >&2; exit 1; }
+else
+  # A session's screen is already up: record its real geometry, not the default.
+  screen=$(xdpyinfo | awk '/dimensions:/ {split($2, size, "x")} /depth of root window:/ {depth = $5} END {print size[1] "x" size[2] "x" depth}')
 fi
 
 if [ $# -eq 0 ]; then
