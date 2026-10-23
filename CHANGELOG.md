@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-24
+
 ### Added
 - Player review (`/ai-dev-kit-player-review`, `references/player-review.md`):
   an independent, player's-eye acceptance of player-visible changes. The
