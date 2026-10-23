@@ -8,6 +8,32 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Added
+- Player review (`/ai-dev-kit-player-review`, `references/player-review.md`):
+  an independent, player's-eye acceptance of player-visible changes. The
+  author's session writes a playtest request bound to the commit, tree and
+  asset lock (`scripts/player-review.cjs request`); a new session plays that
+  build on a claimed workstation only through `ws-play`, without reading code
+  or diffs, and files a report with its evidence (`player-review.cjs file`).
+  The role prompt, allowed and forbidden inputs, stuck and crash handling, and
+  the playtest and report templates (`templates/player-review/`, Markdown plus
+  `report.json`) work in any harness.
+- Gate contract key `player_review` (player-visible `paths` and `exclude`,
+  `pool`, `lock`, `rubric`, `specs`, `keep_days`). When a branch touches those
+  paths, `--phase preflight` warns and `--phase merge`/`integrate` fail until
+  the latest review of the current commit passes, is bound to its tree, came
+  from a session other than the author's, and its workstation evidence still
+  matches the manifest written at filing. `--phase status` and
+  `/ai-dev-kit-merge-guardian` report it. There is no waiver.
+- `ws-play` in the workstation base image: the player's channel (`focus`,
+  `click`, `node`, `key`, `type`, `wait`, `shot`, `summary`) that records each
+  step with a screenshot and its SHA-256 in `review/steps.jsonl`. Projects plug
+  in UI-node clicks and a UI summary with `WS_PLAY_NODE` and `WS_PLAY_SUMMARY`.
+- Workstation claims write `claim.json` (pool, slot, workstation, image and
+  image id, screen, start command) into their evidence directory.
+  `resource-lock.cjs prune --evidence-days` keeps a filed player review's
+  evidence until its `keep_until`.
+
 ### Fixed
 - `ws-run` in a pool workstation recorded the default screen
   (`1920x1080x24`) in `ws-run.json` instead of the workstation's own: batch

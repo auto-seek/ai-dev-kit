@@ -15,6 +15,7 @@
         "skills/ai-dev-kit-test-review",
         "skills/ai-dev-kit-doc-review",
         "skills/ai-dev-kit-merge-guardian",
+        "skills/ai-dev-kit-player-review",
         "skills/ai-dev-kit-clean",
         "skills/ai-dev-kit-cascade-init",
         "skills/cascade-center-agent",
@@ -48,6 +49,10 @@
           {
             "name": "ai-dev-kit-merge-guardian",
             "description": "Decide whether a branch may merge back to dev."
+          },
+          {
+            "name": "ai-dev-kit-player-review",
+            "description": "Request or perform an independent player's-eye review of a player-visible change."
           },
           {
             "name": "ai-dev-kit-clean",

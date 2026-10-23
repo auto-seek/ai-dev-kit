@@ -75,6 +75,16 @@ ws-input type TEXT
 ws-input move X Y | click X Y [BUTTON]
 ```
 
+For a player review, `ws-play` is the recorded player's channel: each call
+(`focus`, `click X Y`, `node NODE`, `key`, `type`, `wait`, `shot [NAME]`,
+`summary`) acts on the screen, saves a screenshot under
+`$WS_OUT/review/shots/` and appends the step, with the screenshot's SHA-256, to
+`$WS_OUT/review/steps.jsonl`. A project offers UI-node clicks and a UI summary
+by setting `WS_PLAY_NODE` (a command that clicks the node named by its last
+argument) and `WS_PLAY_SUMMARY` (a command that prints the summary) in the
+pool's `env`; without them `node` exits 2 and `summary` lists the windows. See
+`skills/ai-dev-kit/references/player-review.md`.
+
 `PATTERN` is matched against the title, then `WM_CLASS`. Prefer an ASCII class
 (Godot sets it to the project name): Godot stores non-ASCII titles in `WM_NAME`
 as Latin-1, which xdotool cannot match.
@@ -102,7 +112,9 @@ docker exec <container> ws-run --timeout 1800 -- <start command> <args>
 ```
 
 and release or reclaim runs `docker rm -f <container>`, so the next holder gets
-a new container.
+a new container. The claimer also writes `claim.json` into the evidence
+directory: pool, slot, workstation, image and image id, screen and start
+command, which a player review cites.
 
 - The worktree is mounted at its host path so build outputs that record
   absolute paths stay valid on both sides. Nothing that exposes a host display

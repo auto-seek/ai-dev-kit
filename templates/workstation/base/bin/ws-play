@@ -1,0 +1,91 @@
+#!/bin/bash
+# The player's operation channel on a workstation. Each call performs one
+# action on the container's screen, saves a screenshot of the result and
+# appends the step to $WS_OUT/review/steps.jsonl, so a player review's evidence
+# shows every action and what the player saw after it.
+#   ws-play [--note TEXT] [--no-shot] focus PATTERN     give a window input focus
+#   ws-play [--note TEXT] [--no-shot] click X Y [BUTTON]
+#   ws-play [--note TEXT] [--no-shot] node NODE         click a UI node ($WS_PLAY_NODE)
+#   ws-play [--note TEXT] [--no-shot] key KEY...        e.g. Escape ctrl+s Page_Down
+#   ws-play [--note TEXT] [--no-shot] type TEXT
+#   ws-play [--note TEXT] [--no-shot] wait SECONDS
+#   ws-play [--note TEXT] shot [NAME]                   screenshot only
+#   ws-play [--note TEXT] summary                       describe the UI ($WS_PLAY_SUMMARY)
+# Projects provide the node and summary channel through the workstation's
+# environment: WS_PLAY_NODE is a command that clicks the node named by its last
+# argument; WS_PLAY_SUMMARY prints a text summary of the UI. Without them,
+# `node` exits 2 and `summary` lists the visible windows. Actions wait
+# $WS_PLAY_SETTLE seconds (default 0.5) before the screenshot.
+# Prints the screenshot path, relative to $WS_OUT, and the summary text.
+set -euo pipefail
+usage() { sed -n '6,13s/^#  //p' "$0" >&2; exit 2; }
+
+out=${WS_OUT:-/ws/out}
+dir=$out/review
+note=""
+shot=1
+while [ $# -gt 0 ]; do
+  case $1 in
+    --note) [ $# -ge 2 ] || usage; note=$2; shift 2 ;;
+    --no-shot) shot=0; shift ;;
+    *) break ;;
+  esac
+done
+[ $# -ge 1 ] || usage
+verb=$1; shift
+mkdir -p "$dir/shots" "$dir/summaries"
+n=$(( $( [ -f "$dir/steps.jsonl" ] && wc -l < "$dir/steps.jsonl" || echo 0) + 1 ))
+id=$(printf '%04d' "$n")
+int='^[0-9]+$'
+code=0
+name=""
+summary=""
+settle=${WS_PLAY_SETTLE:-0.5}
+
+case $verb in
+  focus) [ $# -eq 1 ] || usage; ws-input focus "$1" >/dev/null || code=$? ;;
+  click) [ $# -ge 2 ] && [ $# -le 3 ] || usage; ws-input click "$@" || code=$? ;;
+  node)
+    [ $# -eq 1 ] || usage
+    [ -n "${WS_PLAY_NODE:-}" ] || { echo "ws-play: this project provides no node channel (WS_PLAY_NODE); click by coordinates instead" >&2; exit 2; }
+    read -r -a channel <<<"$WS_PLAY_NODE"
+    "${channel[@]}" "$1" || code=$? ;;
+  key) [ $# -ge 1 ] || usage; ws-input key "$@" || code=$? ;;
+  type) [ $# -eq 1 ] || usage; ws-input type "$1" || code=$? ;;
+  wait) [ $# -eq 1 ] && [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] || usage; sleep "$1"; settle=0 ;;
+  shot)
+    [ $# -le 1 ] || usage
+    [[ -z ${1:-} || ${1:-} =~ ^[A-Za-z0-9._-]+$ ]] || usage
+    name=${1:-}; shot=1; settle=0 ;;
+  summary)
+    [ $# -eq 0 ] || usage
+    summary=review/summaries/$id.txt
+    if [ -n "${WS_PLAY_SUMMARY:-}" ]; then
+      read -r -a channel <<<"$WS_PLAY_SUMMARY"
+      "${channel[@]}" >"$out/$summary" 2>&1 || code=$?
+    else
+      for window in $(xdotool search --onlyvisible --name . 2>/dev/null || true); do
+        eval "$(xdotool getwindowgeometry --shell "$window")"
+        printf 'window %s "%s" at %s,%s size %sx%s\n' "$window" "$(xdotool getwindowname "$window")" "$X" "$Y" "$WIDTH" "$HEIGHT"
+      done >"$out/$summary"
+    fi
+    shot=0; settle=0 ;;
+  *) usage ;;
+esac
+
+file=""
+digest=""
+if [ "$shot" = 1 ]; then
+  sleep "$settle"
+  file=review/shots/$id${name:+-$name}.png
+  ws-shot "$out/$file"
+  digest=$(sha256sum "$out/$file" | cut -d' ' -f1)
+fi
+jq -nc --argjson n "$n" --arg at "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" --arg verb "$verb" --arg note "$note" \
+  --argjson exit "$code" --arg shot "$file" --arg sha "$digest" --arg summary "$summary" \
+  '{n: $n, at: $at, verb: $verb, args: $ARGS.positional, note: (if $note == "" then null else $note end), exit: $exit,
+    shot: (if $shot == "" then null else $shot end), shot_sha256: (if $sha == "" then null else $sha end),
+    summary: (if $summary == "" then null else $summary end)}' --args -- "$@" >>"$dir/steps.jsonl"
+[ -z "$file" ] || echo "$file"
+[ -z "$summary" ] || cat "$out/$summary"
+exit "$code"

@@ -153,6 +153,9 @@ test("simultaneous claims hand each workstation out once and the rest exit 75 af
   assert.deepEqual(f.containers(), won.map(fields => fields.workstation).sort());
   for (const fields of won) {
     assert.match(fields.exec, new RegExp(`exec ${fields.workstation} ws-run --timeout 1800 -- `));
+    const claim = JSON.parse(fs.readFileSync(path.join(fields.out, "claim.json"), "utf8"));
+    assert.deepEqual([claim.pool, claim.slot, claim.workstation, claim.image, claim.screen], ["ws", Number(fields.slot), fields.workstation, "ws-image:test", "1920x1080x24"]);
+    assert.match(claim.image_id, /^sha256:[0-9a-f]{64}$/);
     assert.equal(f.cli("release", ["--pool", "ws", "--token", fields.token]).code, 0);
   }
   assert.deepEqual(f.containers(), []);

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "request": "0123456789ab-c0ffee",
+  "candidate": {
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "tree": "89abcdef0123456789abcdef0123456789abcdef"
+  },
+  "reviewer": {
+    "session": "<this session's id>",
+    "harness": "claude",
+    "model": "<model id, optional>"
+  },
+  "verdict": "pass",
+  "summary": "Reached the market, bought a sword and equipped it in 14 steps. Prices showed before buying and the inventory grid fit the 1280x720 window.",
+  "stuck": [],
+  "confusing": [
+    { "step": 6, "text": "The equip button only appears after hovering the item; I tried clicking the item first." }
+  ],
+  "spec_mismatches": [],
+  "feelings": "Quick and readable. The gold frame on the shop looks like the rest of the menus.",
+  "scores": {
+    "clarity": 4,
+    "responsiveness": 5,
+    "visual consistency": 5,
+    "feel": 4
+  }
+}

@@ -37,7 +37,7 @@ Use semver: new skill/feature → minor (`0.2.1 → 0.3.0`); fix/docs-only → p
 ```text
 skills/
 ├── ai-dev-kit/            # the reusable skill: core rules + references/ (loop, test-review, document-discipline, review-agents, agent-prompts, subtraction, asking-the-user, plain-language)
-└── ai-dev-kit-*/          # 6 user-invoked workflow skills (loop, preflight, test-review, doc-review, merge-guardian, clean) — thin entry points into the references above
+└── ai-dev-kit-*/          # user-invoked workflow skills (loop, preflight, test-review, doc-review, merge-guardian, player-review, clean, cascade-init) — thin entry points into the references above
 
 bootstrap/                 # installers (init-skill / install-skill / install-adapter)
 scripts/

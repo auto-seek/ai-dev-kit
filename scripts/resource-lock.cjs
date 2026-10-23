@@ -960,6 +960,18 @@ function requirePrepared(ctx, project) {
   }
 }
 
+// claim.json ties the evidence directory to the workstation it came from; a
+// player review cites it. Written by the claimer, outside the container.
+function recordClaim(ctx, outcome, out, project, label) {
+  const image = docker(["image", "inspect", "--format", "{{.Id}}", ctx.pool.image]);
+  fs.writeFileSync(path.join(out, "claim.json"), `${JSON.stringify({
+    schema_version: 1, pool: ctx.pool.name, slot: outcome.slot, workstation: outcome.container, label,
+    image: ctx.pool.image, image_id: image.status === 0 ? image.stdout.trim() : null, screen: ctx.pool.screen,
+    start: ctx.pool.start, cpus: ctx.pool.cpus, memory: ctx.pool.memory, worktree: project, host: HOST,
+    claimed_at: new Date().toISOString(),
+  }, null, 2)}\n`);
+}
+
 function evidenceDir(ctx, options, token) {
   const out = options.out ? path.resolve(options.out) : path.join(ctx.dir, "out", token);
   fs.mkdirSync(out, { recursive: true });
@@ -994,6 +1006,7 @@ async function claim(options) {
   assigned = outcome;
   const out = evidenceDir(ctx, options, token);
   await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project);
+  recordClaim(ctx, outcome, out, project, label);
   done = true;
   const tool = [process.execPath, __filename].map(quote).join(" ");
   const result = {
@@ -1038,6 +1051,7 @@ async function runPool(options) {
   assigned = outcome;
   const out = evidenceDir(ctx, options, token);
   await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project);
+  recordClaim(ctx, outcome, out, project, label);
   const timeout = options.timeout !== undefined ? options.timeout : String(ctx.pool.timeoutS);
   child = spawn(DOCKER, ["exec", outcome.container, "ws-run", "--timeout", timeout, "--", ...ctx.pool.start, ...argv], {
     detached: true,
@@ -1260,6 +1274,12 @@ function prune(options) {
       const file = path.join(out, token);
       const stat = statQuiet(file);
       if (!stat?.isDirectory() || live.has(token) || stat.mtimeMs > cutoff) continue;
+      // A filed player review keeps its evidence until keep_until (player-review.cjs).
+      const filed = readJson(path.join(file, "review", "filed.json"));
+      if (filed?.keep_until && Date.parse(filed.keep_until) > Date.now()) {
+        lines.push(`kept evidence ${file}: player review ${filed.request} until ${filed.keep_until.slice(0, 10)}`);
+        continue;
+      }
       const size = allocated(file);
       if (!options.dryRun) fs.rmSync(file, { recursive: true, force: true });
       lines.push(`${verb} evidence ${file} (${gib(size)} allocated)`);

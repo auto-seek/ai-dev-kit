@@ -388,6 +388,33 @@ shared file; the wrapper exits 75 when its exclusive resource is busy; a loop
 runner uses `--blocked-exit-code 75` to requeue, `--phase status --all --json`
 to find branches that need work, and a single integrator to land them.
 
+### Player review of player-visible changes
+
+A project whose changes are seen by players lists the roots of those files in
+the contract; a different session then has to play the exact candidate before
+merge:
+
+```json
+"player_review": {
+  "paths": ["Game/Scenes", "data/ui"],
+  "exclude": ["Game/Testing"],
+  "pool": "godot",
+  "lock": "data/objects.lock.yaml",
+  "rubric": "docs/qa/player-rubric.md",
+  "specs": ["docs/art/art-bible.md"],
+  "keep_days": 30
+}
+```
+
+When the branch's diff against the merge base touches a player-visible path,
+preflight warns and merge (and integrate) fail until the latest review filed
+for HEAD (`scripts/player-review.cjs file`) passes, is bound to HEAD's commit
+and tree, came from a session other than the author's, and its workstation
+evidence still matches its manifest. `--phase status` reports the state. The
+role, templates, evidence layout and retention are in
+`skills/ai-dev-kit/references/player-review.md`. Without `player_review` the
+gate does not check player reviews.
+
 ## Implementation and verification boundary
 
 The implementation reuses `project-state.cjs` for worktree ownership, Git's

@@ -68,7 +68,7 @@ function loadContract(project) {
   let contract;
   try { contract = JSON.parse(content.toString("utf8")); }
   catch { throw new Error(`${contractPath}: invalid JSON`); }
-  objectKeys(contract, ["schema_version", "base_ref", "requirements", "preflight", "receipt_binding"], contractPath);
+  objectKeys(contract, ["schema_version", "base_ref", "requirements", "preflight", "receipt_binding", "player_review"], contractPath);
   if (contract.schema_version !== 1) throw new Error(`${contractPath}: schema_version must be 1`);
   if (![undefined, "target", "merge-base"].includes(contract.receipt_binding)) throw new Error(`${contractPath}: receipt_binding must be target or merge-base`);
   if (typeof contract.base_ref !== "string" || !contract.base_ref.trim() || contract.base_ref.startsWith("-") || /[\0\r\n]/.test(contract.base_ref)) {
@@ -100,7 +100,30 @@ function loadContract(project) {
     if (contract.preflight.task_args.dir !== undefined) relativeFile(contract.preflight.task_args.dir, "preflight.task_args.dir");
     if (![undefined, true, false].includes(contract.preflight.task_args.required)) throw new Error("preflight.task_args.required must be true or false");
   }
+  if (contract.player_review !== undefined) playerReviewContract(contract.player_review);
   return contract;
+}
+// Player-visible roots are literal repository-relative paths, like test-scope
+// roots: a file is player-visible when it is a root or lies under one.
+function playerReviewContract(review) {
+  objectKeys(review, ["paths", "exclude", "pool", "lock", "rubric", "specs", "keep_days"], "player_review");
+  if (!Array.isArray(review.paths) || !review.paths.length) throw new Error("player_review.paths must list the roots of player-visible files");
+  for (const root of review.paths) relativeFile(root, "player_review.paths entries");
+  if (review.exclude !== undefined) {
+    if (!Array.isArray(review.exclude)) throw new Error("player_review.exclude must be a list");
+    for (const root of review.exclude) relativeFile(root, "player_review.exclude entries");
+  }
+  if (review.pool !== undefined && (typeof review.pool !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(review.pool))) {
+    throw new Error("player_review.pool must name a workstation pool");
+  }
+  for (const key of ["lock", "rubric"]) if (review[key] !== undefined) relativeFile(review[key], `player_review.${key}`);
+  if (review.specs !== undefined) {
+    if (!Array.isArray(review.specs)) throw new Error("player_review.specs must be a list");
+    for (const spec of review.specs) relativeFile(spec, "player_review.specs entries");
+  }
+  if (review.keep_days !== undefined && (!Number.isSafeInteger(review.keep_days) || review.keep_days < 1 || review.keep_days > 3650)) {
+    throw new Error("player_review.keep_days must be a whole number of days from 1 to 3650");
+  }
 }
 function taskId(branch, label = "task-sections") {
   const match = branch.match(/^[A-Za-z0-9][A-Za-z0-9._-]*\/([A-Za-z0-9][A-Za-z0-9._-]*)$/);
@@ -613,6 +636,9 @@ function checkoutStatus(checkout, branch, override, shared, findings) {
     if (current.task_args?.error) report.problems.push(`task args: ${current.task_args.error}`);
     report.test_review = testReview(checkout);
     if (!report.test_review.ok) report.problems.push("test review not current");
+    // Loaded here: player-review.cjs requires this module for loadContract.
+    report.player_review = require("./player-review.cjs").evaluate(checkout);
+    if (report.player_review.required && report.player_review.state !== "passed") report.problems.push(`player review ${report.player_review.state}`);
   } catch (error) {
     report.error = error.message;
     report.problems.push(error.message);
@@ -668,6 +694,7 @@ function renderStatus(report) {
     if (item.requirements) lines.push(`  requirements: ${item.requirements.ok ? `ok (${item.requirements.path}${item.requirements.task_id ? `, task ${item.requirements.task_id}` : ""})` : item.requirements.detail}`);
     if (item.subtraction) lines.push(`  subtraction: ${!item.subtraction.ok ? item.subtraction.detail : item.subtraction.disabled ? "gate disabled" : `debt ${item.subtraction.debt} of ${item.subtraction.threshold}`}`);
     if (item.test_review) lines.push(`  test review: ${item.test_review.ok ? "ok" : item.test_review.detail}`);
+    if (item.player_review?.required) lines.push(`  player review: ${item.player_review.state} — ${item.player_review.detail}`);
     if (item.note) lines.push(`  note: ${item.note}`);
     lines.push(`  merge readiness: ${item.merge_ready === null ? "unknown" : item.merge_ready ? "ready" : `not ready — ${item.problems.join("; ")}`}`);
   }
@@ -793,10 +820,10 @@ async function main() {
   fs.renameSync(temp, path.join(files.shared, files.receipt));
   console.log(`project preflight passed; content-bound receipt: ${files.receipt}`);
 }
-if (require.main !== module) {
-  // Library use is limited to tests of the lock primitive.
-  module.exports = { acquireIntegrateLock, BlockedError };
-} else main().catch(error => {
+// Library use: tests of the lock primitive, and player-review.cjs reading the
+// contract (also when this file runs as the main script and status loads it).
+module.exports = { acquireIntegrateLock, BlockedError, loadContract };
+if (require.main === module) main().catch(error => {
   if (error instanceof BlockedError) {
     console.error(`project-gate: BLOCKED (retryable): ${error.message}`);
     process.exitCode = BLOCKED_EXIT;

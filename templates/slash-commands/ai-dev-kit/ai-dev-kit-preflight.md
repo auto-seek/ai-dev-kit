@@ -45,6 +45,10 @@ which receipts are missing or stale and why. Under `receipt_binding: merge-base`
 target movement does not stale preflight; one integrator runs `--phase integrate`
 before merge.
 
+`player review:` warnings mean player-visible files changed and the current
+commit has no passing review from another session yet; preflight still passes,
+merge will not. Request one per `references/player-review.md`.
+
 Review touched comments using `references/implementation-discipline.md`: plain,
 verified context for maintainers, with useful API docs and directives preserved.
 Block materially misleading explanations with code/contract evidence;

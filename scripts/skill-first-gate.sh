@@ -560,6 +560,23 @@ check_changed_tests_reviewed() {
   fi
 }
 
+# A change to the contract's player_review.paths needs a passing review from
+# another session, bound to the current commit: preflight warns, merge blocks.
+check_player_review() {
+  [ "$RULE_PHASE" = "preflight" ] || [ "$RULE_PHASE" = "merge" ] || return 0
+  if ! git -C "$PROJECT_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local result rc=0
+  result="$(node "$SCRIPT_DIR/player-review.cjs" check --project "$PROJECT_PATH" --phase "$RULE_PHASE" 2>&1)" || rc=$?
+  case "$rc" in
+    0) [ -z "$result" ] || echo "$result" ;;
+    3) emit_warn "$result" ;;
+    *) emit_fail "$result" ;;
+  esac
+}
+
 GATE_LOG="$AIDK_ROOT/.ai-dev-kit/workflow/gate-log.jsonl"
 
 run_project_gate() {
@@ -893,6 +910,7 @@ case "$COORD_ENGINE" in
 esac
 
 check_changed_tests_reviewed
+check_player_review
 
 if [ "$FAILED" = false ] && [ "$PHASE" != "stop" ]; then
   run_project_gate "$PHASE"

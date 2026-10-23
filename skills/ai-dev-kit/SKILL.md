@@ -34,6 +34,7 @@ Use this skill to keep development work complete, reviewable, and synchronized w
 - For viewing a task flow or starting a local read-only graph, use [cascade-flow](../cascade-flow/SKILL.md). For a new Git center with project-ID admission and a web UI, use `ai-dev-kit-cascade-init` and its `references/project-id-center.md`.
 - For a new project's shared center, use `ai-dev-kit-cascade-init` and `references/project-center.md`; a shared server can host separate project centers. For migration or failed access, use `references/center-access.md`; restore verified access rather than waiving coordination or merging without a current preflight receipt.
 - For new or changed tests, read `references/test-review.md`.
+- For player-visible changes (requesting, performing or checking an independent player's-eye playtest), read `references/player-review.md`.
 - For document creation, brainstorming, plans, design docs, or doc drift, read `references/document-discipline.md`.
 - For review, merge readiness, SOLID/DRY/KISS checks, or adversarial verification, read `references/review-agents.md`.
 - For ready-to-send reviewer prompts, read `references/agent-prompts.md`.
@@ -50,6 +51,7 @@ When installed from the ai-dev-kit local marketplace, harnesses may expose:
 - `/ai-dev-kit-test-review`
 - `/ai-dev-kit-doc-review`
 - `/ai-dev-kit-merge-guardian`
+- `/ai-dev-kit-player-review`
 - `/ai-dev-kit-clean`
 - `/ai-dev-kit-cascade-init`
 - `/cascade-center-agent`

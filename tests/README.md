@@ -121,10 +121,25 @@ No Cascade executable or test-framework plugin is needed for this suite.
   Pool cases claim real containers through `resource-lock.cjs`: declared CPU,
   memory, swap and user limits, a new container per claim with nothing left from
   the previous holder, removal on release and after the owner is killed,
-  `run --pool` exit codes and evidence, refusal of a pool needing more memory
+  `run --pool` exit codes and evidence, `claim.json` with the image id and the
+  session's screen recorded by `ws-run`, `ws-play` steps with verified
+  screenshot hashes, refusal of a pool needing more memory
   than Docker has, status of Docker's real disk, prune removing a stray but never
   a held workstation, and exit 75 when free disk is short. Needs Docker and a
   base image named by `WORKSTATION_IMAGE`; fails without them.
+- **`player-review.test.cjs`** (in `test:team`) — real Git fixture repositories,
+  the real gate and `scripts/player-review.cjs`, with only the reviewer's
+  evidence files as fixtures: no review is needed outside `player_review.paths`
+  (or under `exclude`); a player-visible change without a review warns at
+  preflight and fails merge and status; a passing review from another session
+  bound to HEAD passes; the author's session cannot file, and a forged receipt
+  still blocks; a review of an earlier commit is stale; `fail` and `incomplete`
+  block with the report's summary and a later failing review replaces a pass;
+  changed, missing or deleted evidence blocks; filing refuses evidence without
+  a workstation claim, a report for another build or an incomplete report;
+  uncommitted player-visible changes are refused and block; a receipt for
+  another tree is refused; invalid `player_review` settings fail the gate; and
+  prune keeps filed evidence until `keep_until`.
 - **`workstation-pool.test.cjs`** (in `test:team`) — real CLI processes against
   workstation pools in `scripts/resource-lock.cjs`, with `fake-docker.cjs` standing
   in for the Docker CLI only: a burst of nine runs on three workstations never

@@ -45,6 +45,11 @@ Block if:
   receipt from `scripts/test-review-evidence.cjs record` no longer matches the branch,
   target base, committed/index/worktree contents, untracked test inventory or
   the reviewed checkout's tracked `.ai-dev-kit/test-scope.json` policy;
+- player-visible files changed (the contract's `player_review.paths`) and there
+  is no passing player review from a different session bound to the current
+  commit and tree, with its workstation evidence unchanged
+  (`references/player-review.md`; the merge gate prints the reason, and there is
+  no waiver);
 - docs or development ledgers contradict implemented behavior;
 - changed or affected comments materially mislead maintainers or API users
   (cite code/contract evidence and risk per `references/implementation-discipline.md`,

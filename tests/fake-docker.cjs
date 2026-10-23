@@ -9,7 +9,8 @@
 // argv per call).
 //   info --format "{{.MemTotal}} {{.NCPU}}"   prints $FAKE_DOCKER_MEMTOTAL (default
 //                                           8218034176, an 8 GB VM) and $FAKE_DOCKER_NCPU (10)
-//   image inspect <image>                    exit 0 when listed in images.txt
+//   image inspect [--format F] <image>       exit 0 when listed in images.txt; with --format
+//                                           prints a stable fake image id
 //   image ls --filter reference=<i>|label=<k=v> --format F   "1.81GB" per reference match,
 //                                           "<image>" per label match
 //   image rm <image>                         removes it from images.txt
@@ -60,7 +61,12 @@ switch (command) {
     break;
   case "image": {
     const [verb, ...more] = rest;
-    if (verb === "inspect") { if (!images().includes(more[0])) fail(1, `Error: No such image: ${more[0]}`); break; }
+    if (verb === "inspect") {
+      const image = options(more).rest[0];
+      if (!images().includes(image)) fail(1, `Error: No such image: ${image}`);
+      if (options(more)["--format"]) process.stdout.write(`sha256:${require("node:crypto").createHash("sha256").update(image).digest("hex")}\n`);
+      break;
+    }
     if (verb === "rm") {
       const keep = imageLines().filter(line => line.split("\t")[0] !== more[0]);
       fs.writeFileSync(path.join(state, "images.txt"), keep.map(line => `${line}\n`).join(""));

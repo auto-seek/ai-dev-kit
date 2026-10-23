@@ -465,7 +465,8 @@ node "<kit>/scripts/resource-lock.cjs" release --pool godot --token "$token"
 - `claim` prints `token`, `slot`, `workstation` (the container), `out` (the
   evidence directory mounted at `/ws/out`) and ready `exec`, `renew` and `release`
   commands (`--json` for one JSON object). The worktree is mounted at its own
-  path and is the working directory.
+  path and is the working directory. `out` also gets `claim.json` (pool, slot,
+  workstation, image id, screen, start command), which player reviews cite.
 - Queueing is the lock's: first come, first served, `--wait` then exit 75 without
   a ticket. Holders do not block waiters; at most `slots` are held.
 - Only the claim's token renews or releases it. Status never prints tokens, and
@@ -546,6 +547,9 @@ Checklist before running dozens of agents against one repository:
 - **A single integrator.** One agent or human merges into the target branch, one
   candidate at a time, rerunning the merge gate on the updated base. Workers
   deliver branches; they do not merge.
+- **Player review for player-visible changes.** A session never accepts its own
+  player-visible change; a new session plays the candidate on a workstation and
+  files a report (`references/player-review.md`) before merge.
 - **Queued exclusive resources.** Every scarce resource goes through
   `resource-lock.cjs`; 75 means retry later, not failure. Move GUI checks that do
   not need the host screen to a workstation pool so they run in parallel.

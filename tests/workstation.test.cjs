@@ -245,3 +245,54 @@ test("a claim needing more free disk than there is exits 75 before anything star
   assert.equal(result.code, 75);
   assert.match(result.stderr, /BLOCKED \(retryable\): pool ws needs 100000\.00 GiB free \(min_free_disk\) but Docker's disk has [\d.]+ GiB free and the host disk at .* has [\d.]+ GiB free/);
 });
+
+test("ws-play performs each step on the private screen and records it with its screenshot", t => {
+  const out = outDir(t);
+  const script = [
+    "set -e",
+    "xev -geometry 300x200+0+0 -event keyboard -event button > /ws/out/xev.log &",
+    'ws-input wait "Event Tester" 10 > /dev/null',
+    'ws-play focus "Event Tester" > /dev/null',
+    'ws-play --note "press a" key a > /dev/null',
+    "ws-play click 50 60 > /dev/null",
+    "ws-play shot after > /dev/null",
+    "ws-play summary > /ws/out/summary.txt",
+    "if ws-play node start 2> /ws/out/node.err; then exit 9; fi",
+    'WS_PLAY_NODE="echo pressed" ws-play node start-button > /ws/out/node.out',
+  ].join("\n");
+  const result = run(out, ["--screen", "640x480x24", "--", "bash", "-c", script], ["-e", "WS_PLAY_SETTLE=0.1"]);
+  assert.equal(result.status, 0, result.stderr);
+  const steps = fs.readFileSync(path.join(out, "review/steps.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(steps.map(step => [step.n, step.verb, step.args]), [
+    [1, "focus", ["Event Tester"]], [2, "key", ["a"]], [3, "click", ["50", "60"]], [4, "shot", ["after"]], [5, "summary", []], [6, "node", ["start-button"]],
+  ], "a node step without a channel is not recorded");
+  assert.equal(steps[1].note, "press a");
+  for (const step of steps.filter(step => step.shot)) {
+    const body = fs.readFileSync(path.join(out, step.shot));
+    assert.equal(require("node:crypto").createHash("sha256").update(body).digest("hex"), step.shot_sha256);
+    assert.deepEqual(pngSize(path.join(out, step.shot)), [640, 480]);
+  }
+  assert.equal(steps[3].shot, "review/shots/0004-after.png");
+  assert.equal(steps[4].shot, null);
+  assert.match(fs.readFileSync(path.join(out, steps[4].summary), "utf8"), /window \d+ "Event Tester" at 0,0 size 300x200/);
+  assert.match(fs.readFileSync(path.join(out, "summary.txt"), "utf8"), /Event Tester/);
+  assert.match(fs.readFileSync(path.join(out, "node.err"), "utf8"), /this project provides no node channel \(WS_PLAY_NODE\)/);
+  assert.match(fs.readFileSync(path.join(out, "node.out"), "utf8"), /^pressed start-button\nreview\/shots\/0006\.png$/m);
+  assert.match(fs.readFileSync(path.join(out, "xev.log"), "utf8"), /KeyPress[\s\S]*keysym 0x61, a/);
+});
+
+test("a claim records its workstation, image id, screen and start command in claim.json", t => {
+  const p = pool(t, { start: ["bash", "-c", "--rendering-method forward_plus"] });
+  const held = p.claim(["--label", "evidence"]);
+  const claim = JSON.parse(fs.readFileSync(path.join(held.out, "claim.json"), "utf8"));
+  assert.equal(claim.workstation, held.workstation);
+  assert.equal(claim.pool, "ws");
+  assert.equal(claim.image, image);
+  assert.match(claim.image_id, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(claim.screen, "640x480x24");
+  assert.deepEqual(claim.start, ["bash", "-c", "--rendering-method forward_plus"]);
+  const screen = docker(["exec", held.workstation, "ws-run", "--", "true"]);
+  assert.equal(screen.status, 0, screen.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(held.out, "ws-run.json"), "utf8")).screen, "640x480x24");
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", held.token]).code, 0);
+});

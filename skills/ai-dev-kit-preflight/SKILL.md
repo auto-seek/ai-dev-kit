@@ -47,6 +47,10 @@ are held on this machine. Under `receipt_binding: merge-base`
 target movement does not stale this receipt; a single integrator runs
 `--phase integrate` before merge.
 
+`player review:` warnings mean player-visible files changed and the current
+commit has no passing review from another session yet; preflight still passes,
+merge will not. Request one per `../ai-dev-kit/references/player-review.md`.
+
 Review touched comments using `implementation-discipline.md`: plain, verified
 context for maintainers, with useful API docs and directives preserved. Block
 materially misleading explanations with code/contract evidence; wording-only

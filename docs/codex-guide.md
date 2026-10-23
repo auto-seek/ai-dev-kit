@@ -10,6 +10,7 @@ skills/ai-dev-kit-preflight
 skills/ai-dev-kit-test-review
 skills/ai-dev-kit-doc-review
 skills/ai-dev-kit-merge-guardian
+skills/ai-dev-kit-player-review
 skills/ai-dev-kit-clean
 skills/ai-dev-kit-cascade-init
 skills/cascade-center-agent
@@ -25,6 +26,7 @@ ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-preflight/
 ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-test-review/
 ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-doc-review/
 ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-merge-guardian/
+${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-player-review/
 ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-clean/
 ${CODEX_HOME:-~/.codex}/skills/ai-dev-kit-cascade-init/
 ${CODEX_HOME:-~/.codex}/skills/cascade-center-agent/
@@ -88,6 +90,7 @@ Invoke installed skills directly:
 /ai-dev-kit-test-review
 /ai-dev-kit-doc-review
 /ai-dev-kit-merge-guardian
+/ai-dev-kit-player-review
 /ai-dev-kit-clean
 /ai-dev-kit-cascade-init
 /cascade-center-agent
