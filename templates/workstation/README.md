@@ -10,9 +10,16 @@ templates/workstation/
 ├── base/                    # generic image: Xvfb, xdotool, screenshots, ws-* entry
 │   ├── Dockerfile
 │   └── bin/ws-run, ws-shot, ws-input
-└── examples/godot-dotnet/   # example project layer: Godot .NET + .NET SDK on Mesa
-    ├── Dockerfile, SHA512SUMS, fetch.sh
+└── examples/
+    ├── godot-dotnet/        # example project layer: Godot .NET + .NET SDK on Mesa
+    │   └── Dockerfile, SHA512SUMS, fetch.sh
+    └── starter/             # example project: pool, host prepare, capture, player review
 ```
+
+To set up a project from scratch, follow
+`skills/ai-dev-kit/references/workstation-onboarding.md`; `examples/starter/`
+is the project it walks through. Code that captures evidence follows
+`skills/ai-dev-kit/references/no-focus-stealing.md`.
 
 Project runtimes (engines, SDKs, fonts, assets) belong in a layer `FROM` the
 base image, like the Godot example. The base stays project-neutral.

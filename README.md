@@ -19,6 +19,14 @@ requirements scope and actual verification command. Preflight executes that
 command and binds its result to the final commit and working inputs. For team
 setup, task publishing and worker startup, use the [Git center runbook](docs/team-git-center.md).
 
+GUI evidence (screenshots, scripted play) runs on Linux workstation containers
+with private screens, so agents never take the host screen. The
+[workstation onboarding guide](skills/ai-dev-kit/references/workstation-onboarding.md)
+covers the pool, host preparation, evidence capture and player review in order,
+with a [runnable example project](templates/workstation/examples/starter/).
+Evidence code follows the [no focus stealing rule](skills/ai-dev-kit/references/no-focus-stealing.md),
+which `scripts/focus-steal-scan.cjs` checks.
+
 ## Quick Start
 
 Daily use should start from installed skills, not shell scripts.

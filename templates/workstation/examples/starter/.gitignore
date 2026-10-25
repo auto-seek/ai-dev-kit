@@ -1,0 +1,3 @@
+# Host-side caches and per-machine state; see tools/prepare.sh.
+game/.import/
+.ai-dev-kit/workflow/

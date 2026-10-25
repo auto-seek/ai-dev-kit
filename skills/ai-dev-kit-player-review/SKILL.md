@@ -15,6 +15,9 @@ $ARGUMENTS
 
 Decide which side you are on.
 
+A project that has no workstation pool or `player_review` contract yet sets
+them up first, in the order of `../ai-dev-kit/references/workstation-onboarding.md`.
+
 Author (you changed player-visible files): commit the change, then write the
 playtest request with `node <kit>/scripts/player-review.cjs request --goal ...
 --focus ...`, in a player's words. Ask for a new session to review it: give that

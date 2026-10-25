@@ -419,7 +419,10 @@ alone on top of the candidate, any later change voids it, and the gate prints
 reports the state. The
 role, templates, evidence layout and retention are in
 `skills/ai-dev-kit/references/player-review.md`. Without `player_review` the
-gate does not check player reviews.
+gate does not check player reviews. Declare `paths` only after workstations and
+one whole review run for the project (see "When to turn it on" in
+`skills/ai-dev-kit/references/workstation-onboarding.md`): from then on every
+branch that touches them waits for a review or an owner's waiver.
 
 ## Implementation and verification boundary
 

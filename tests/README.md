@@ -127,6 +127,34 @@ No Cascade executable or test-framework plugin is needed for this suite.
   than Docker has, status of Docker's real disk, prune removing a stray but never
   a held workstation, and exit 75 when free disk is short. Needs Docker and a
   base image named by `WORKSTATION_IMAGE`; fails without them.
+- **`starter-workstation.test.cjs`** (`npm run test:workstation`) — the example
+  project in `templates/workstation/examples/starter` on real Docker, with only
+  its image name replaced by `WORKSTATION_IMAGE`: `tools/capture.sh` claims a
+  workstation, captures the menu at the pool's 1280x720 screen and removes the
+  container; a reviewer session plays the example through `ws-play` (focus,
+  the project's UI summary, screenshots, keys), files the report with that
+  evidence, and the gate's merge phase then passes.
+- **`starter-example.test.cjs`** (in `test:team`) — the same example copied into
+  a temporary Git repository and driven through the real scripts and gate, with
+  `fake-docker.cjs` for the Docker CLI only: the pool loads; a claim from an
+  unprepared checkout exits 1 with the pool's `prepare` text and starts nothing;
+  `tools/prepare.sh` imports once, clones the import cache into a checkout with
+  the same `assets.lock`, refuses assets that do not match the lock and imports
+  for another lock; a claim from a prepared checkout starts a workstation with
+  the example's CPUs, memory, swap, environment, screen and start command, and
+  release removes it; `tools/check.sh` runs the focus-steal scan and reports a
+  planted `xdotool` call by file and line; the contract makes a `game/` change
+  warn at preflight and fail merge, refuses an owner it does not list, and
+  passes merge with the listed owner's waiver.
+- **`focus-steal-scan.test.cjs`** (in `test:team`) — real CLI runs of
+  `scripts/focus-steal-scan.cjs` on temporary Git repositories: every built-in
+  rule reports its own sample line and is listed in
+  `references/no-focus-stealing.md`; comments and in-app or in-workstation
+  input are not reported; findings name file, line, column, rule and reason;
+  only files under `paths`, not under `exclude`, not ignored by Git, with a
+  source extension or a shebang are read; an allow entry covers only its path,
+  rule and match text and one that matches nothing fails the scan; project
+  rules extend the built-in ones; configuration errors exit 2.
 - **`player-review.test.cjs`** (in `test:team`) — real Git fixture repositories,
   the real gate and `scripts/player-review.cjs`, with only the reviewer's
   evidence files as fixtures: no review is needed outside `player_review.paths`

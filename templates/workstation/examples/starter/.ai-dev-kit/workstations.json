@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "warn_hold_seconds": 900,
+  "pools": {
+    "starter": {
+      "image": "ai-dev-kit/workstation-base:local",
+      "slots": 2,
+      "cpus": 1,
+      "memory": "512m",
+      "screen": "1280x720x24",
+      "env": {
+        "WS_PLAY_SUMMARY": "tools/ws-summary.sh"
+      },
+      "start": [
+        "game/start.sh"
+      ],
+      "requires": [
+        "game/assets",
+        "game/.import/lock.sha256"
+      ],
+      "prepare": "on the host: tools/prepare.sh [--from <another checkout with the same assets.lock>]",
+      "timeout_seconds": 300,
+      "max_hold_seconds": 1800
+    }
+  }
+}

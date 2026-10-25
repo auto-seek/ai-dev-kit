@@ -8,6 +8,38 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Added
+- Workstation onboarding guide (`references/workstation-onboarding.md`): how a
+  project goes from nothing to GUI evidence on workstations and player review,
+  in order: build the image; declare the pool, with every
+  `workstations.json` key, its default, and sizing from Docker's memory (run
+  only 2.5g, build and run 3g; an 8 GB Docker VM fits three or two); prepare
+  checkouts on the host (assets, import cache cloned with `cp -c` from a
+  checkout with the same asset lock, `requires`/`prepare`) and why not in a
+  workstation; capture evidence (claim, `ws-run`, `ws-play`, the evidence
+  directory, release, status, prune, disk checks and Docker Desktop's delayed
+  release); turn on player review only after the workstation and one whole
+  review work; common failures and fixes. Linked from the README, the
+  `ai-dev-kit` and player-review skills, the workstation README and
+  `loop-workflow.md`.
+- Example project `templates/workstation/examples/starter/`: a pool, host
+  prepare script, capture script, UI summary for `ws-play`, focus-steal scan
+  configuration and a gate contract with player review, around a two-window
+  `xmessage` game. `tests/starter-example.test.cjs` (in `test:team`, fake
+  Docker CLI) runs its configuration, prepare and capture claims, scan and
+  gate; `tests/starter-workstation.test.cjs` (in `test:workstation`) captures
+  and plays it on real Docker and files a review that lets merge pass.
+- No focus stealing rule (`references/no-focus-stealing.md`): evidence code
+  does not bring windows to the front, move focus, or move or press the system
+  pointer and keyboard; input goes through the app or a workstation. It lists
+  forbidden calls for macOS, Windows, X11, Linux uinput tools, desktop
+  automation libraries, Electron, Godot and Unity, and what to use instead.
+  `scripts/focus-steal-scan.cjs` checks a project's capture code against
+  those rules (Node only, so a project can also copy it): configured `paths`,
+  `exclude`, project `rules`, and an `allow` list whose entries need a reason
+  and fail the scan when they match nothing; findings print file, line,
+  column, rule and reason. Tested in `tests/focus-steal-scan.test.cjs`.
+
 ## [0.23.0] - 2026-10-25
 
 ### Added

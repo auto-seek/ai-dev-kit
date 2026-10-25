@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "paths": [
+    "tools",
+    "game"
+  ],
+  "allow": [
+    {
+      "path": "tools/ws-summary.sh",
+      "rule": "x11.xdotool",
+      "reason": "WS_PLAY_SUMMARY runs inside the workstation, where xdotool sees only the private screen"
+    }
+  ]
+}

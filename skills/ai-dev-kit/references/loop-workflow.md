@@ -401,7 +401,9 @@ container, see the kit's `templates/workstation/README.md`) does not need the
 host screen. Declare a pool of interchangeable workstations so agents run such
 checks in parallel; keep the exclusive lock (for example `--name godot`) for work
 that needs the host screen. Pools and locks are independent, even with the same
-name.
+name. Setting up a project's first pool, host preparation and evidence capture
+is described step by step in `workstation-onboarding.md`; evidence code never
+takes the host screen (`no-focus-stealing.md`).
 
 Declare pools in the tracked `.ai-dev-kit/workstations.json`, read from the main
 checkout (relative paths resolve against the project root):

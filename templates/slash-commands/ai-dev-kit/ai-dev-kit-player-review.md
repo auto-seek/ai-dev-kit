@@ -15,6 +15,9 @@ Skill path preference:
 
 Decide which side you are on.
 
+A project that has no workstation pool or `player_review` contract yet sets
+them up first, in the order of `references/workstation-onboarding.md`.
+
 Author (you changed player-visible files): commit the change, then write the
 playtest request, in a player's words:
 

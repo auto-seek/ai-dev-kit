@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "base_ref": "main",
+  "requirements": {
+    "mode": "global",
+    "ledger": ".ai-dev-kit/workflow/LEDGER.md"
+  },
+  "preflight": {
+    "argv": [
+      "bash",
+      "tools/check.sh"
+    ],
+    "timeout_seconds": 300
+  },
+  "player_review": {
+    "paths": [
+      "game"
+    ],
+    "pool": "starter",
+    "lock": "assets.lock",
+    "rubric": "docs/qa/player-rubric.md",
+    "specs": [
+      "docs/design/menu.md"
+    ],
+    "keep_days": 30,
+    "owners": [
+      "lead-designer"
+    ]
+  }
+}

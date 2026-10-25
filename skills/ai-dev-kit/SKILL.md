@@ -35,6 +35,8 @@ Use this skill to keep development work complete, reviewable, and synchronized w
 - For a new project's shared center, use `ai-dev-kit-cascade-init` and `references/project-center.md`; a shared server can host separate project centers. For migration or failed access, use `references/center-access.md`; restore verified access rather than waiving coordination or merging without a current preflight receipt.
 - For new or changed tests, read `references/test-review.md`.
 - For player-visible changes (requesting, performing or checking an independent player's-eye playtest), read `references/player-review.md`.
+- For setting up a project's GUI evidence on workstation containers (pool, host preparation, capture, turning on player review), read `references/workstation-onboarding.md`.
+- For code that takes screenshots or drives a program for evidence, read `references/no-focus-stealing.md`: no foreground, focus or system pointer changes on the host; check with `scripts/focus-steal-scan.cjs`.
 - For document creation, brainstorming, plans, design docs, or doc drift, read `references/document-discipline.md`.
 - For review, merge readiness, SOLID/DRY/KISS checks, or adversarial verification, read `references/review-agents.md`.
 - For ready-to-send reviewer prompts, read `references/agent-prompts.md`.
