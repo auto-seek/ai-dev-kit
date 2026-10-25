@@ -8,6 +8,15 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Changed
+- `cascade-center-agent`: `deploy/cascade-runtime/NODE_PROVENANCE.json` now
+  comes from CascadeCenter-web `2c2c515` (previously `b0895ee`). It records that
+  .3 is deployed on the center and links the rollout record. The scripts,
+  wheels, patches and `NODE_SHA256SUMS` are unchanged, and join and the node
+  runtime behave as before. `references/source.md` explains that the file's
+  report paths point into the upstream repository and that the .1 package
+  it keeps for rollback is not in this kit.
+
 ## [0.25.0] - 2026-10-25
 
 ### Changed

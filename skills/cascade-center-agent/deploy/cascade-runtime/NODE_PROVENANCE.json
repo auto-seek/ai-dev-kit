@@ -1,6 +1,6 @@
 {
   "version": "0.8.2+nodecollab.3",
-  "release_status": "release candidate: local build, not an upstream tag, not deployed",
+  "release_status": "deployed on the center server 2026-10-25 (receive guard, publisher and center runtime); agents upgrading through ai-dev-kit; local build, not an upstream tag",
   "source_base": "bcffbf13c32d188cc9655d2e8f19719742480b7a",
   "patches": ["node-collaboration.patch", "node-storage-concurrency.patch"],
   "source_commits": {
@@ -27,7 +27,8 @@
   "previous": {
     "version": "0.8.2+nodecollab.1",
     "wheel": "cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl",
-    "kept_for": "production runtime; rollback and the mixed-runtime test"
+    "kept_for": "rollback, agents not yet upgraded, and the mixed-runtime test; the center server ran it until 2026-10-25"
   },
-  "verification_report": "../../docs/verification/node-runtime-heartbeat-20261019.md"
+  "verification_report": "../../docs/verification/node-runtime-heartbeat-20261019.md",
+  "deployment_record": "../../docs/verification/nodecollab3-rollout-20261025.md"
 }
