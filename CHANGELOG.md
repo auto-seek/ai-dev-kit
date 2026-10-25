@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-25
+
 ### Added
 - Workstation onboarding guide (`references/workstation-onboarding.md`): how a
   project goes from nothing to GUI evidence on workstations and player review,

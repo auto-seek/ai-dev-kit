@@ -7,14 +7,14 @@
   },
   "metadata": {
     "description": "Skill-first GitFlow loop work, document synchronization, test review, multi-agent review, and merge readiness.",
-    "version": "0.23.0"
+    "version": "0.24.0"
   },
   "plugins": [
     {
       "name": "ai-dev-kit",
       "source": "./",
       "description": "AI Dev Kit skills and slash-invoked workflows for Claude Code.",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "category": "development",
       "keywords": [
         "ai-dev-kit",
