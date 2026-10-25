@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-25
+
 ### Changed
 - `cascade-center-agent`: the bundled Cascade runtime is now
   `0.8.2+nodecollab.3` (wheel SHA256 `4f6b1dbe…e041`), the version the center

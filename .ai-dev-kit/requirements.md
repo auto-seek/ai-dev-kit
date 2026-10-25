@@ -170,7 +170,7 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `deploy/cascade-runtime/` carries the .3 wheel (SHA256 `4f6b1dbe…e041`), both patches, `NODE_PROVENANCE.json` and the vendored dependencies byte-identical to the source; the .1 wheel and its `NODE_SHA256SUMS` line are dropped because no skill test needs them.
 - [x] `SKILL.md` and `references/task-cycle.md` describe heartbeat renewal, how a joined agent upgrades (update the plugin, re-run join with the original inputs in the same directory, active tasks included) and the new errors; source records name `b0895ee` and .3.
 - [x] `tests/cascade-center-config.test.cjs` installs the .3 wheel and checks that join installs the packaged runtime itself; `npm run build`, skill validation, gitleaks and an internal-address grep pass.
-- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review.
+- [x] Version bump in all three manifests and the release, done by the kit maintainer after review (0.25.0).
 
 ## workstation-pool
 
