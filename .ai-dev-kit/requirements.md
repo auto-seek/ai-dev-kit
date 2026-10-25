@@ -164,6 +164,14 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `SKILL.md` describes connection reuse, the directory length limit and how an existing agent re-runs join to get the new config; source records name `33b9ec0`.
 - [x] Version 0.18.1 in all three manifests with a CHANGELOG entry; `npm run build`, skill validation, the Center client tests, gitleaks and an internal-address grep pass.
 
+## center-nodecollab3
+
+- [x] Package the CascadeCenter-web `b0895ee` client: `cascade-node-native.py`, `cascade-portal-publish.py`, `cascade-process.cjs` and `cascade-portal/admission.cjs` byte-identical; `cascade-node-join.cjs` three-way merged so it gains only the `0.8.2+nodecollab.3` pin while keeping the kit's no-built-in-center rule; the other five files unchanged and identical.
+- [x] `deploy/cascade-runtime/` carries the .3 wheel (SHA256 `4f6b1dbe…e041`), both patches, `NODE_PROVENANCE.json` and the vendored dependencies byte-identical to the source; the .1 wheel and its `NODE_SHA256SUMS` line are dropped because no skill test needs them.
+- [x] `SKILL.md` and `references/task-cycle.md` describe heartbeat renewal, how a joined agent upgrades (update the plugin, re-run join with the original inputs in the same directory, active tasks included) and the new errors; source records name `b0895ee` and .3.
+- [x] `tests/cascade-center-config.test.cjs` installs the .3 wheel and checks that join installs the packaged runtime itself; `npm run build`, skill validation, gitleaks and an internal-address grep pass.
+- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review.
+
 ## workstation-pool
 
 - [x] `templates/workstation/` provides the generic Linux workstation image (Xvfb, `ws-run` batch/session entry with process-group timeout and `ws-run.json`, `ws-shot`, `ws-input`) and a Godot .NET example layer with official SHA512-checked downloads; `tests/workstation.test.cjs` covers the entry with real containers.

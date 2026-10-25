@@ -52,13 +52,14 @@ async function privateFile(filename) {
   return fs.readFile(filename, "utf8");
 }
 async function runtime(directory) {
+  const version = "0.8.2+nodecollab.3";
   if (process.env.NODE_CASCADE_PYTHON) {
     const python = process.env.NODE_CASCADE_PYTHON;
     if (!path.isAbsolute(python))
       throw new Error("NODE_CASCADE_PYTHON must be absolute");
     await run(python, [
       "-c",
-      "import importlib.metadata;assert importlib.metadata.version('cascade-auto')=='0.8.2+nodecollab.1'",
+      `import importlib.metadata;assert importlib.metadata.version('cascade-auto')=='${version}'`,
     ]);
     return python;
   }
@@ -91,7 +92,7 @@ async function runtime(directory) {
     "--no-index",
     "--find-links",
     path.join(dist, "node-dependencies"),
-    path.join(dist, "cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl"),
+    path.join(dist, `cascade_auto-${version}-py3-none-any.whl`),
   ]);
   return python;
 }

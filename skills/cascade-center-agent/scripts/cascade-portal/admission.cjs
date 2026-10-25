@@ -270,6 +270,20 @@ function createAdmission({
           .some((row) => centers.has(row.center))
       );
     },
+    // Everyone whose display name the viewer may see through a common configured project, the viewer included.
+    coMembers(viewer) {
+      return [
+        ...new Set(
+          db
+            .prepare(
+              "SELECT a.center,b.username FROM members a JOIN members b ON b.center=a.center WHERE a.username=?",
+            )
+            .all(viewer)
+            .filter((row) => centers.has(row.center))
+            .map((row) => row.username),
+        ),
+      ];
+    },
     // The agent proves its credential by requesting the code; the member proves the
     // login by entering it. Only then does the registry record that member as owner.
     ownerCode(agentId, center) {

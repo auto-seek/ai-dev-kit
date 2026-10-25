@@ -28,7 +28,7 @@
 
 ## 使用完整的 Center 发行物
 
-`ai-dev-kit` 根目录历史门户不是项目 ID 服务的部署源。使用项目指定的 **CascadeCenter-web** 兼容完整发行物 `CENTER_RELEASE`。本插件客户端与 viewer 的上游仓库和清单见 [来源记录](../../cascade-center-agent/references/source.json)，该记录不指定部署站点或业务仓库。其上游基线为 `46e91ac5af695d8eaf7c5fc2ff4db6ee77f24123`，配套运行时为 `0.8.2+nodecollab.1`；更换版本时验证整个服务与客户端的兼容性，不安装 latest 或降级为旧写入端。
+`ai-dev-kit` 根目录历史门户不是项目 ID 服务的部署源。使用项目指定的 **CascadeCenter-web** 兼容完整发行物 `CENTER_RELEASE`。本插件客户端与 viewer 的上游仓库和清单见 [来源记录](../../cascade-center-agent/references/source.json)，该记录不指定部署站点或业务仓库。客户端的上游基线为 `b0895eeb284db17c5e2db58c927e48a7ee837013`，viewer 为 `46e91ac5af695d8eaf7c5fc2ff4db6ee77f24123`（见 [viewer 来源](../../cascade-flow/references/source.json)），配套运行时为 `0.8.2+nodecollab.3`；更换版本时验证整个服务与客户端的兼容性，不安装 latest 或降级为旧写入端。
 
 在已取得的发行物中先读这些实际文件，再按其中参数准备配置，不凭本文猜测不存在的自动安装命令：
 

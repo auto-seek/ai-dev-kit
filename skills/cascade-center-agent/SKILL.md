@@ -40,11 +40,17 @@ description: 用网页复制的项目ID@中心地址（或项目 ID 加配置的
 
 命令参数中的 ID 会进入进程参数或命令历史，人工接入优先交互输入。`--directory` 必须在产品仓库之外、由当前用户独占，路径由 agent 自行选择即可，不让用户填写更多接入表单。目录路径在 macOS 上最多 76 字节、Linux 上最多 80 字节（SSH 控制 socket 放在其中，Unix socket 路径有长度上限）；超出时 join 在生成密钥前报错，换一个更短的目录即可，不会多登记 agent。每个并发实例使用不同目录；已有实例继续使用原目录和 `client.json`，不要复制别人的 token/私钥。
 
-脚本会自动生成密钥、登记项目身份、安装随包携带的固定 Cascade `0.8.2+nodecollab.1`、生成 SSH 配置，并验证 HTTPS 身份和任务中心 Git 读取。SSH 配置只对任务中心的 Git 主机启用连接复用：一次领取或续租的十几次 Git 往返只认证一次，连接空闲 60 秒后关闭。旧版本加入的实例用原输入在同一目录重新运行 join，即可换成带连接复用的配置，中心返回同一 agent；不重新运行时旧配置照常可用，只是每条 Git 命令单独握手。只在返回 **`ready: true`** 时报告接入成功，保存返回的 `agent`、`level` 和 `configFile` 路径，不打印凭据内容。返回中 `owner` 为 `null` 时按下节完成归属确认。
+脚本会自动生成密钥、登记项目身份、安装随包携带的固定 Cascade `0.8.2+nodecollab.3`、生成 SSH 配置，并验证 HTTPS 身份和任务中心 Git 读取。SSH 配置只对任务中心的 Git 主机启用连接复用：一次操作的多次 Git 往返只认证一次，连接空闲 60 秒后关闭。只在返回 **`ready: true`** 时报告接入成功，保存返回的 `agent`、`level` 和 `configFile` 路径，不打印凭据内容。返回中 `owner` 为 `null` 时按下节完成归属确认。
 
 若超时或返回不确定，使用错误中给出的**同一目录、原中心地址、原项目 ID 和原 level**重试（原来用的是 `项目ID@中心地址` 就照原样再用）；不换目录重复注册。后续任务操作直接复用 `client.json` 中保存的中心地址，不重新注册；同目录的注册重试可从 `enrollment.json` 恢复地址。显式参数或环境变量与原绑定不一致时拒绝重试，不能拿同一身份切换中心。不要用关闭 TLS/SSH 主机验证或安装 latest 来修复失败；保留明确错误。
 
 接入成功后把归属确认码交给使用者，再按后文自行检查项目 Git。只要求“加入”时完成自查并报告，不领取业务任务、不发布测试节点、不向其他 agent 发送测试消息。
+
+### 已加入的实例升级运行时
+
+中心已改用 `0.8.2+nodecollab.3`。用旧版插件（运行时 `0.8.2+nodecollab.1`）加入的实例，更新插件后用原输入在原目录重新运行 join（原来用的是 `项目ID@中心地址` 就照原样再用）。join 校验随包文件，把该目录的 `runtime/` 装成 .3，中心返回同一 agent，已确认的归属不变。自行设置 `NODE_CASCADE_PYTHON` 的实例，join 只检查版本，要先把那个解释器升级到 .3（用 `deploy/cascade-runtime/` 中的 wheel 和 `node-dependencies/` 离线安装）；已有 supervisor 若用自己的 Cascade 运行时，也要同样升级。
+
+有执行中的任务也可以直接升级，不需要先释放：.1 领取的任务在第一次 .3 续租时补上心跳，之后照常续租和完成。插件更新后到重新 join 之前，客户端会拒绝旧运行时，`claim`、`renew`、`complete`、`release` 报 `Use the checksum-verified Cascade 0.8.2+nodecollab.3 runtime`；所以手上有任务时，更新插件后马上重新 join，再续租。只要在租约到期前完成即可，默认 900 秒租约、每 60 秒续租时时间足够。插件更新后 `<skill-dir>` 是新版本的目录；重新 join 后，已在运行、仍用旧目录脚本的续租进程或 supervisor 要重启并改用新目录，旧脚本只接受 .1，会报 `Use the checksum-verified Cascade 0.8.2+nodecollab.1 runtime`。全部 agent 升级后，中心会开始拒绝 .1 的写入，未升级的实例届时无法领取、续租或完成。
 
 ## 确认 agent 归属
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # Keep the existing event-chain/replay verification and redaction contract.
+# Verified reads take no lease and check only events appended since the last one.
 spec = importlib.util.spec_from_file_location("portal_publisher", Path(__file__).with_name("cascade-portal-publish.py"))
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
@@ -19,7 +20,7 @@ require = publisher.require
 
 
 def execute(args):
-    require(importlib.metadata.version("cascade-auto") == "0.8.2+nodecollab.1", "Use the checksum-verified Cascade 0.8.2+nodecollab.1 runtime")
+    require(importlib.metadata.version("cascade-auto") == publisher.NODE_RUNTIME, f"Use the checksum-verified Cascade {publisher.NODE_RUNTIME} runtime")
     require(args.cache_dir.is_absolute(), "An absolute private cache directory is required")
     require(args.remote and not args.remote.startswith("-") and not re.search(r"[\x00-\x20\x7f]", args.remote), "Invalid Git remote")
     if "://" in args.remote:
@@ -35,9 +36,16 @@ def execute(args):
     from cascade.types import Contract
 
     storage = GitStorage(args.remote, namespace=args.namespace, cache_dir=args.cache_dir)
-    before, history = publisher.read_verified(storage)
     client = CascadeClient(storage)
     action = request.get("action")
+    if action == "renew":
+        # A renewal only moves the claim's heartbeat ref and appends no event; the
+        # center hook checks the claim, token and lease, so no log is read here.
+        publisher.node_id(request.get("agent")); publisher.node_id(request.get("taskId"))
+        token = request.get("token")
+        require(type(token) is int and token > 0, "A positive fencing token is required")
+        return client.renew(request["taskId"], agent_id=request["agent"], token=token).to_dict()
+    before = publisher.read_verified(storage)
     if action in {"publish", "publish-batch"}:
         publications = [request["publication"]] if action == "publish" else request.get("publications")
         require(isinstance(publications, list) and 1 <= len(publications) <= 30, "Expected 1-30 publications")
@@ -50,13 +58,12 @@ def execute(args):
             envelope = {"schema_version": 1, "publication_id": publication["id"], "brief_sha256": publication["briefSha256"], "brief": brief}
             dependencies = {dep: Contract(f"Use versioned task input {publication['briefSha256']} and this upstream's delivered context", "Provide verified results and immutable artifact references") for dep in brief["dependencies"]}
             specs.append({"node_id": task_id, "deps": dependencies, "required_tier": brief["requiredTier"], "task_input": envelope, "publisher": publication["publisherAgent"]})
-        present = [s["node_id"] in before.nodes for s in specs]
+        present = [s["node_id"] in before.graph.nodes for s in specs]
         require(not any(present) or all(present), "Only part of the immutable batch exists; stop and inspect")
         if not all(present):
             result = client.add_batch(specs)
             require(result.success, f"Native publication failed [{result.code}]: {result.message}")
-        after, events = publisher.read_verified(storage)
-        require([e.to_dict() for e in events[:len(history)]] == [e.to_dict() for e in history], "Existing history changed")
+        after = publisher.read_verified(storage, before).graph
         for spec in specs:
             node = after.nodes.get(spec["node_id"])
             require(node is not None and node.task_input == spec["task_input"] and node.required_tier == spec["required_tier"] and node.publication["publisher"] == spec["publisher"], "Existing task differs from immutable publication; stop and inspect")
@@ -65,7 +72,7 @@ def execute(args):
             node = after.nodes[specs[0]["node_id"]]
             return {"success": True, "task_id": specs[0]["node_id"], "publication": node.publication}
         return {"success": True, "task_ids": [s["node_id"] for s in specs]}
-    require(action in {"claim", "renew", "complete", "release", "check-timeouts"}, "Unsupported native action")
+    require(action in {"claim", "complete", "release", "check-timeouts"}, "Unsupported native action")
     agent = request.get("agent")
     if action != "check-timeouts":
         publisher.node_id(agent)
@@ -82,14 +89,11 @@ def execute(args):
         require(task_id is not None, "Task ID is required")
         token = request.get("token")
         require(type(token) is int and token > 0, "A positive fencing token is required")
-        if action == "renew":
-            result = client.renew(task_id, agent_id=agent, token=token)
-        elif action == "release":
+        if action == "release":
             result = client.release(task_id, agent_id=agent, token=token, reason=request.get("reason", "Explicit node-client release"))
         else:
             result = client.complete(task_id, agent_id=agent, token=token, summary=request.get("summary", ""), critical=request.get("critical", {}), artifacts=request.get("artifacts", ""), deliverables=request.get("deliverables"))
-    after, events = publisher.read_verified(storage)
-    require([e.to_dict() for e in events[:len(history)]] == [e.to_dict() for e in history], "Existing history changed")
+    publisher.read_verified(storage, before)
     return result.to_dict()
 
 

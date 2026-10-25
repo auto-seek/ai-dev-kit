@@ -1,6 +1,6 @@
 {
   "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
-  "sourceCommit": "33b9ec0547ea1a360f5ed25208d13a7f8ae9f11a",
+  "sourceCommit": "b0895eeb284db17c5e2db58c927e48a7ee837013",
   "files": [
     "scripts/cascade-node-client.cjs",
     "scripts/cascade-node-join.cjs",
@@ -13,9 +13,10 @@
     "scripts/cascade-portal-publish.py",
     "scripts/cascade-process.cjs"
   ],
-  "runtime": "0.8.2+nodecollab.1",
-  "packagedAt": "2026-10-20",
+  "runtime": "0.8.2+nodecollab.3",
+  "packagedAt": "2026-10-25",
   "localModifications": {
-    "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source."
+    "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source.",
+    "deploy/cascade-runtime/NODE_SHA256SUMS": "The 0.8.2+nodecollab.1 wheel and its line are left out; agents install only 0.8.2+nodecollab.3. Every other runtime file, including NODE_PROVENANCE.json, is byte-identical to the source."
   }
 }

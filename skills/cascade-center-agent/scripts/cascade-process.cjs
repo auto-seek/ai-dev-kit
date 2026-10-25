@@ -1,20 +1,48 @@
 #!/usr/bin/env node
 "use strict";
-const { spawn, spawnSync } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const { constants } = require("node:os");
 
-function exitedDarwinGroup(pid) {
-  const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], {
-    encoding: "utf8", timeout: 1000, maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, LC_ALL: "C" },
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// States of the processes in group pid, from /bin/ps.
+function groupStates(pid, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    execFile("/bin/ps", ["-axo", "pgid=,stat="], {
+      encoding: "utf8", timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, LC_ALL: "C" },
+    }, (error, stdout) => {
+      if (error || !stdout.trim()) return reject(new Error(`cannot inspect process group ${pid}: ${error ? error.message : "empty ps output"}`));
+      const states = [];
+      for (const line of stdout.trim().split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(\S+)$/);
+        if (!match) return reject(new Error(`cannot inspect process group ${pid}: unexpected ps output`));
+        if (Number(match[1]) === pid) states.push(match[2]);
+      }
+      resolve(states);
+    });
   });
-  if (result.error || result.status !== 0 || !result.stdout.trim()) return false;
-  for (const line of result.stdout.trim().split("\n")) {
-    const match = line.trim().match(/^(\d+)\s+(\S+)$/);
-    if (!match) return false;
-    if (Number(match[1]) === pid && !match[2].startsWith("Z")) return false;
+}
+
+// Signal every process of a command's group. Darwin answers EPERM while the group
+// holds only zombies, until their parent or launchd reaps them, which takes longer
+// on a loaded host. Retry until the signal lands or the group is gone; only if EPERM
+// lasts past settleMs, ps decides, and a live member or a failed ps is an error.
+async function signalGroup(pid, signal, { settleMs = 10000, probeTimeoutMs = 10000 } = {}) {
+  const started = Date.now();
+  for (let wait = 25; ; wait = Math.min(wait * 2, 500)) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (error) {
+      if (error.code === "ESRCH") return;
+      if (error.code !== "EPERM" || process.platform !== "darwin") throw error;
+    }
+    if (Date.now() - started >= settleMs) break;
+    await delay(Math.min(wait, Math.max(0, settleMs - (Date.now() - started))));
   }
-  return true;
+  const live = (await groupStates(pid, probeTimeoutMs)).filter(state => !state.startsWith("Z"));
+  if (live.length) throw new Error(`kill EPERM: ${live.length} live process(es) remain in group ${pid}`);
 }
 
 function redact(text, incomplete = false) {
@@ -56,7 +84,7 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
     });
     const stdout = [], stderr = [];
     let bytes = 0, outputOverflow = false, closed = false, exitCode = 1, cancelled = null;
-    let cleanupFinished = false, killTimer, releaseTimer, startError;
+    let cleanupFinished = false, killTimer, releaseTimer, startError, groupCleared = null, settled = false;
     const signals = { SIGINT: 130, SIGTERM: 143 };
     const handlers = {};
     const cleanup = () => {
@@ -65,38 +93,35 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
       clearTimeout(releaseTimer);
       for (const [signal, handler] of Object.entries(handlers)) process.removeListener(signal, handler);
     };
-    const finish = () => {
-      if (!closed || (cancelled !== null && !cleanupFinished)) return;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      resolve({
-        code: cancelled ?? exitCode,
-        stdout: redact(Buffer.concat(stdout).toString("utf8"), cancelled !== null || exitCode !== 0),
-        stderr: redact(Buffer.concat(stderr).toString("utf8"), true),
-      });
+      reject(new Error(`cannot terminate Cascade process group: ${error.message}`));
     };
-    const signalGroup = signal => {
-      if (!child.pid) return;
-      try {
-        process.kill(-child.pid, signal);
-      } catch (error) {
-        // Darwin can return EPERM for an empty/zombie-only process group.
-        // Verify that no runnable member remains; real permission errors fail.
-        if (error.code === "EPERM" && process.platform === "darwin" && exitedDarwinGroup(child.pid)) return;
-        if (error.code !== "ESRCH") {
-          cleanup();
-          reject(new Error(`cannot terminate Cascade process group: ${error.message}`));
-        }
-      }
+    const finish = () => {
+      if (settled || !closed || (cancelled !== null && !cleanupFinished)) return;
+      // The result is final only once the group kill after a normal exit has landed.
+      (groupCleared ?? Promise.resolve()).then(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({
+          code: cancelled ?? exitCode,
+          stdout: redact(Buffer.concat(stdout).toString("utf8"), cancelled !== null || exitCode !== 0),
+          stderr: redact(Buffer.concat(stderr).toString("utf8"), true),
+        });
+      }, fail);
     };
+    const killGroup = signal => child.pid ? signalGroup(child.pid, signal) : Promise.resolve();
     const cancel = (code, reason) => {
       if (cancelled !== null || closed) return;
       cancelled = code;
       stderr.push(Buffer.from(`\ncascade-process: ${reason}; verify remote state before retrying a write\n`));
       clearTimeout(deadline);
-      signalGroup("SIGTERM");
+      killGroup("SIGTERM").catch(fail);
       // Even if the direct child exits on TERM, a descendant may ignore it.
-      killTimer = setTimeout(() => {
-        signalGroup("SIGKILL");
+      killTimer = setTimeout(() => killGroup("SIGKILL").then(() => {
         cleanupFinished = true;
         // An SSH ControlPersist master runs outside this group. It keeps the
         // stderr passed by a killed multiplex client until the remote command
@@ -106,7 +131,7 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
           child.stderr.destroy();
         }, 2000);
         finish();
-      }, 2000);
+      }, fail), 2000);
     };
     const collect = target => chunk => {
       if (outputOverflow) return;
@@ -130,7 +155,10 @@ function runProcess(command, args, { timeoutSeconds, env = process.env, input })
     child.once("exit", () => {
       // A CLI's background descendants have no work after its result is final.
       // Killing them here also closes inherited pipes before the close event.
-      if (cancelled === null) signalGroup("SIGKILL");
+      if (cancelled === null) {
+        groupCleared = killGroup("SIGKILL");
+        groupCleared.catch(() => {});
+      }
     });
     child.on("close", (code, signal) => {
       closed = true;
@@ -170,7 +198,7 @@ async function main() {
   process.exitCode = result.code;
 }
 
-module.exports = { commandTimeoutSeconds, runCascade, runProcess, redact };
+module.exports = { commandTimeoutSeconds, runCascade, runProcess, redact, signalGroup };
 if (require.main === module) main().catch(error => {
   console.error(`cascade-process: ${redact(error.message, true)}`);
   process.exitCode = 1;

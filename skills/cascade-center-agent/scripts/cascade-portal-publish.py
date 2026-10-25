@@ -13,12 +13,26 @@ import json
 import os
 import re
 import sys
+import tempfile
+from collections import namedtuple
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 class PublishError(Exception):
     """A rejected contract or an unverified publication."""
+
+
+# The node protocol runtime. Its verified reads take no lease, and check only
+# what was appended since the last verified read of the same cache.
+NODE_RUNTIME = "0.8.2+nodecollab.3"
+# Approved 0.8.0 builds serve centers without the node protocol. They have no
+# lease-free read, so their verified reads keep the transaction lease.
+LEGACY_RUNTIME = re.compile(r"0\.8\.0(?:\+[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*)?")
+# One verified read: the snapshot, the number of events in its log, and what a
+# later read needs to prove that history is unchanged (a LogCheckpoint on the
+# node runtime, the event dicts on 0.8.0).
+Verified = namedtuple("Verified", "graph events proof")
 
 
 def redact(value, incomplete=False):
@@ -119,17 +133,66 @@ def validate_plan(plan, root_task):
     return contract, specs
 
 
-def read_verified(storage):
-    from cascade.replay import replay, verify
+def load_checkpoint(path):
+    """The checkpoint of this cache's last verified read; None means verify the whole log."""
+    from cascade.verification import LogCheckpoint
 
-    with storage.lock():
-        graph = storage.load()
-        require(graph is not None, "Existing coordination graph is required")
-        events = storage.events.read_all()
-        require(storage.events.verify_chain()[0], "Event chain verification failed")
-        require(not verify(events, graph, storage.content), "Event replay differs from snapshot")
-        require(replay(events, storage.content).contracts == graph.contracts, "Replayed edge contracts differ from snapshot")
-    return graph, events
+    try:
+        return LogCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return None
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+
+
+def save_checkpoint(path, checkpoint):
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".verified-log-")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            json.dump(checkpoint.to_dict(), target, separators=(",", ":"))
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
+def read_verified(storage, previous=None):
+    """Read and verify one committed state.
+
+    With ``previous`` from an earlier read of the same storage, the accepted
+    event history must also be unchanged. The node runtime verifies only what
+    was appended since the checkpoint kept beside its Git cache; a missing or
+    unusable checkpoint means the whole log is verified.
+    """
+    if LEGACY_RUNTIME.fullmatch(importlib.metadata.version("cascade-auto")):
+        from cascade.replay import replay, verify
+
+        with storage.lock():
+            graph = storage.load()
+            require(graph is not None, "Existing coordination graph is required")
+            events = storage.events.read_all()
+            require(storage.events.verify_chain()[0], "Event chain verification failed")
+            require(not verify(events, graph, storage.content), "Event replay differs from snapshot")
+            require(replay(events, storage.content).contracts == graph.contracts, "Replayed edge contracts differ from snapshot")
+        history = [event.to_dict() for event in events]
+        require(previous is None or history[:len(previous.proof)] == previous.proof, "Existing event history changed")
+        return Verified(graph, len(history), history)
+    require(callable(getattr(storage, "read_snapshot", None)),
+            f"This Cascade runtime cannot read state without the transaction lease; install {NODE_RUNTIME}")
+    from cascade.verification import verify_storage
+
+    path = Path(storage.cache_dir) / "verified-log.json"
+    with storage.read_snapshot():
+        graph, result = verify_storage(storage, previous.proof if previous else load_checkpoint(path), consume=True)
+    require(graph is not None, "Existing coordination graph is required")
+    require(not result.corruption, f"Invalid event log: {result.corruption}")
+    require(result.chain_valid, "Event chain verification failed")
+    require(not result.replay_diffs, "Event replay differs from snapshot")
+    require(result.contracts_match, "Replayed edge contracts differ from snapshot")
+    require(previous is None or result.prefix_preserved, "Existing event history changed")
+    require(result.checkpoint is not None, "Verified event log must end with a newline")
+    save_checkpoint(path, result.checkpoint)
+    return Verified(graph, result.events, result.checkpoint)
 
 
 def matching_nodes(graph, specs):
@@ -150,8 +213,10 @@ def matching_nodes(graph, specs):
 
 def check_runtime_version(version):
     # Source approval still belongs to deployment; a local label is not an upgrade.
-    require(version == "0.8.2+nodecollab.1" or re.fullmatch(r"0\.8\.0(?:\+[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*)?", version),
-            "Use the approved Cascade 0.8.0 environment (an approved local build is allowed)")
+    # 0.8.2+nodecollab.1 is refused: it has no lease-free read or incremental
+    # verification, and the center switches this script and its node runtime together.
+    require(version == NODE_RUNTIME or LEGACY_RUNTIME.fullmatch(version),
+            f"Use the approved Cascade 0.8.0 environment (an approved local build is allowed) or the pinned {NODE_RUNTIME} node runtime")
 
 
 def publish(args):
@@ -177,17 +242,16 @@ def publish(args):
     from cascade.types import Contract
 
     storage = GitStorage(args.remote, namespace=args.namespace, cache_dir=args.cache_dir)
-    before, history = read_verified(storage)
-    existed = matching_nodes(before, specs)
+    before = read_verified(storage)
+    existed = matching_nodes(before.graph, specs)
     if not existed:
         native = [{**spec, "deps": {parent: Contract(**edge) for parent, edge in spec["deps"].items()}} for spec in specs]
         result = CascadeClient(storage).add_batch(native)
         require(result.success, f"Native add_batch did not confirm publication [{result.code}]: {result.message}; inspect the remote before any further action")
     # A new native read synchronizes from the remote; a successful return from
     # add_batch alone is not a publication receipt. No failed write is retried here.
-    after, events = read_verified(storage)
-    require(matching_nodes(after, specs), "Published tasks are missing on fresh readback")
-    require([event.to_dict() for event in events[:len(history)]] == [event.to_dict() for event in history], "Existing event history changed")
+    after = read_verified(storage, before)
+    require(matching_nodes(after.graph, specs), "Published tasks are missing on fresh readback")
     return {"taskIds": plan["taskIds"], "proposalVersion": contract["proposalVersion"],
             "proposalSha256": contract["proposalSha256"], "actor": args.actor,
             "alreadyPublished": existed, "readbackVerified": True}

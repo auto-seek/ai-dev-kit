@@ -33,7 +33,7 @@ test("packaged join CLI selects a configured center and preserves retry identity
   ok(await run("python3", ["-m", "venv", path.join(root, "runtime")]));
   ok(await run(python, ["-m", "pip", "install", "--no-index", "--find-links",
     path.join(skill, "deploy/cascade-runtime/node-dependencies"),
-    path.join(skill, "deploy/cascade-runtime/cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl")]));
+    path.join(skill, "deploy/cascade-runtime/cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl")]));
   const cert = path.join(root, "server.pem"), key = path.join(root, "server.key");
   ok(await run("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
     "-sha256", "-days", "1", "-subj", "/CN=127.0.0.1", "-addext",
@@ -180,5 +180,14 @@ test("packaged join CLI selects a configured center and preserves retry identity
       await assert.rejects(fs.stat(directory), { code: "ENOENT" });
     }
     assert.equal(a.requests.length + b.requests.length, 5);
+  });
+  await t.test("without a configured interpreter join installs the packaged runtime before registering", async () => {
+    const directory = path.join(root, "own-runtime");
+    rejected(await join(directory, ["--origin", a.origin], { NODE_CASCADE_PYTHON: undefined }));
+    assert.equal(a.requests.length, 4);
+    const version = await run(path.join(directory, "runtime/bin/python"), ["-c",
+      "import importlib.metadata;print(importlib.metadata.version('cascade-auto'))"]);
+    ok(version);
+    assert.equal(version.stdout.trim(), "0.8.2+nodecollab.3");
   });
 });

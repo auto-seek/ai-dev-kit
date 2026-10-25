@@ -8,6 +8,50 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Changed
+- `cascade-center-agent`: the bundled Cascade runtime is now
+  `0.8.2+nodecollab.3` (wheel SHA256 `4f6b1dbe…e041`), the version the center
+  runs. Each active claim has one heartbeat ref in the task-center Git; a
+  renewal pushes only that ref, with no state write, no event and no log read
+  (one fetch and one push). State writes are an optimistic compare-and-swap
+  instead of a lock ref.
+- Agents that joined with an earlier version must update the plugin and re-run
+  join with their original inputs in the same directory; join reinstalls the
+  directory's `runtime/` as .3 and the center returns the same agent. Until
+  then the new client refuses the old runtime (`Use the checksum-verified
+  Cascade 0.8.2+nodecollab.3 runtime`). An agent with an active task can
+  upgrade without releasing it: a .1 claim gets its heartbeat on the first .3
+  renewal. An agent that sets `NODE_CASCADE_PYTHON` must upgrade that
+  interpreter itself. A renewal loop or supervisor still running the previous
+  plugin directory's scripts must be restarted after the re-join, because
+  those scripts accept only .1.
+- `references/task-cycle.md` describes heartbeat renewal and adds an error
+  section: `STATE_CONFLICT` (returned only after 60 seconds of lost
+  compare-and-swap attempts, nothing written, retry), renewal after expiry
+  (`STALE_TOKEN` or `Execution lease has expired at the center`), heartbeat
+  refusals, `Cannot reclaim a valid execution lease` (a .1 client tried to
+  time out a task kept alive by heartbeats), and the refusals after the center
+  stops accepting .1 writes.
+- The bundled Center clients now come from CascadeCenter-web `b0895ee`
+  (previously `33b9ec0`). `cascade-node-native.py`, `cascade-portal-publish.py`,
+  `cascade-process.cjs` and `cascade-portal/admission.cjs` are byte-identical;
+  `cascade-node-join.cjs` is three-way merged, so it gains only the .3 runtime
+  pin and keeps the kit's rule that a bare project ID needs a configured
+  center. Verified reads take no lease and check only events appended since
+  the last verified read of the same cache.
+- `ai-dev-kit-cascade-init`'s center reference names the client baseline
+  `b0895ee` and runtime .3.
+
+### Fixed
+- `cascade-center-agent`: on macOS, a command whose process group holds only
+  zombies after it exits is no longer reported as failed; the client retries
+  the group kill for up to 10 seconds before checking with `ps`.
+
+### Removed
+- `cascade-center-agent` no longer bundles the `0.8.2+nodecollab.1` wheel;
+  agents install only .3, and `NODE_SHA256SUMS` drops that line. The runtime
+  directory adds `node-storage-concurrency.patch`, which produces .3 from .1.
+
 ## [0.24.0] - 2026-10-25
 
 ### Added
