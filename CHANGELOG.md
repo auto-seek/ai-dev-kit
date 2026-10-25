@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-25
+
 ### Added
 - Owner waiver for player reviews: `player-review.cjs waive --owner <owner>
   --reason <text>` writes a tracked
