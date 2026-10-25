@@ -402,7 +402,8 @@ merge:
   "lock": "data/objects.lock.yaml",
   "rubric": "docs/qa/player-rubric.md",
   "specs": ["docs/art/art-bible.md"],
-  "keep_days": 30
+  "keep_days": 30,
+  "owners": ["lead-designer"]
 }
 ```
 
@@ -410,7 +411,12 @@ When the branch's diff against the merge base touches a player-visible path,
 preflight warns and merge (and integrate) fail until the latest review filed
 for HEAD (`scripts/player-review.cjs file`) passes, is bound to HEAD's commit
 and tree, came from a session other than the author's, and its workstation
-evidence still matches its manifest. `--phase status` reports the state. The
+evidence still matches its manifest. An owner listed in `owners` on the target
+branch can instead waive one exact candidate with `player-review.cjs waive`,
+from a session other than the author's; the tracked waiver file is committed
+alone on top of the candidate, any later change voids it, and the gate prints
+`player review: WAIVED by owner ...` at merge and status. `--phase status`
+reports the state. The
 role, templates, evidence layout and retention are in
 `skills/ai-dev-kit/references/player-review.md`. Without `player_review` the
 gate does not check player reviews.

@@ -11,15 +11,21 @@
 // Requests and receipts live in the main checkout's .ai-dev-kit/player-review/;
 // the evidence stays in the workstation claim's directory, which prune keeps
 // until the receipt's keep_until.
+// An owner listed in the target branch's contract may instead waive the review
+// of one exact candidate: a tracked waiver file, signed from a session other
+// than the author's, committed alone on top of that candidate. Any later change
+// to another file voids it.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const { stateRoot } = require("./project-state.cjs");
 const { loadContract } = require("./project-gate-evidence.cjs");
 
 const DIR = path.join(".ai-dev-kit", "player-review");
+const WAIVERS = ".ai-dev-kit/player-review-waivers";
+const CONTRACT = ".ai-dev-kit/gate-contract.json";
 const ID = /^[0-9a-f]{12}-[0-9a-f]{6}$/;
 const SESSION = /^[\w.:@-]{4,128}$/;
 const VERDICTS = ["pass", "fail", "incomplete"];
@@ -29,10 +35,11 @@ const USAGE_TEXT = `usage:
   player-review.cjs request --goal <text> --focus <text> [--focus <text>]... [--start <text>]
                             [--max-steps <n>] [--max-minutes <n>] [--pool <pool>] [--session <id>] [--project <dir>]
   player-review.cjs file --request <id> --evidence <claim out dir> [--session <id>] [--project <dir>]
+  player-review.cjs waive --owner <owner> --reason <text> [--request <id>] [--session <id>] [--project <dir>]
   player-review.cjs check [--phase preflight|merge] [--project <dir>]
   player-review.cjs status [--json] [--project <dir>]
 sessions: --session, else AI_DEV_KIT_SESSION_ID, else CLAUDE_CODE_SESSION_ID
-exit: 0 ok; 1 refused or blocked; 2 usage; 3 warning (check --phase preflight)`;
+exit: 0 ok; 1 refused or blocked; 2 usage; 3 warning (check --phase preflight, or a waived review)`;
 
 class UsageError extends Error {}
 class Refusal extends Error {}
@@ -52,7 +59,7 @@ function parse(argv) {
   const valued = {
     "--goal": "goal", "--start": "start", "--max-steps": "maxSteps", "--max-minutes": "maxMinutes",
     "--pool": "pool", "--session": "session", "--project": "project", "--request": "request",
-    "--evidence": "evidence", "--phase": "phase",
+    "--evidence": "evidence", "--phase": "phase", "--owner": "owner", "--reason": "reason",
   };
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === "--json") { options.json = true; continue; }
@@ -66,7 +73,7 @@ function parse(argv) {
     if (i + 1 >= rest.length) throw new UsageError(`missing value for ${rest[i]}`);
     options[key] = rest[++i];
   }
-  if (!["request", "file", "check", "status"].includes(command)) throw new UsageError(`unknown command: ${command ?? "(none)"}`);
+  if (!["request", "file", "waive", "check", "status"].includes(command)) throw new UsageError(`unknown command: ${command ?? "(none)"}`);
   if (options.phase !== undefined && !["preflight", "merge"].includes(options.phase)) throw new UsageError("--phase must be preflight or merge");
   options.project = path.resolve(options.project ?? ".");
   return options;
@@ -370,11 +377,16 @@ function evaluate(project) {
   const visible = [...new Set([...committed, ...pending])];
   if (!visible.length) return { required: false, state: "not required", detail: "no player-visible changes" };
   const build = candidate(project, conf);
-  const all = receipts(reviewRoot(project, false));
-  const mine = all.filter(receipt => receipt.candidate?.commit === build.commit);
   if (pending.length) {
     return { required: true, state: "uncommitted", detail: `uncommitted player-visible changes (${listed(pending)}) are not covered by any review; commit them and request a review` };
   }
+  const review = reviewState(project, build, committed);
+  return review.state === "passed" ? review : waiverState(project, conf) ?? review;
+}
+
+function reviewState(project, build, committed) {
+  const all = receipts(reviewRoot(project, false));
+  const mine = all.filter(receipt => receipt.candidate?.commit === build.commit);
   if (!mine.length) {
     const older = all.find(receipt => build.branch && receipt.candidate?.branch === build.branch);
     return {
@@ -391,11 +403,125 @@ function evaluate(project) {
     : { required: true, state: "passed", detail: `${mine[0].request} by session ${mine[0].reviewer_session} for ${short(build.commit)} (${listed(committed)})`, receipt: mine[0] };
 }
 
+// Owners come from the target branch's contract, so a branch cannot list itself.
+function targetOwners(project, conf) {
+  let contract;
+  try { contract = JSON.parse(git(project, ["show", `${conf.base_ref}:${CONTRACT}`])); } catch { return []; }
+  return Array.isArray(contract?.player_review?.owners) ? contract.player_review.owners : [];
+}
+
+function mergeBase(project, conf) {
+  const target = git(project, ["rev-parse", "--verify", `${conf.base_ref}^{commit}`]).trim();
+  return git(project, ["merge-base", target, "HEAD"]).trim();
+}
+
+const isCommit = value => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
+
+// Why a waiver cannot cover the branch's current HEAD, or null.
+function waiverProblem(project, conf, waiver) {
+  if (waiver.schema_version !== 1 || !isCommit(waiver.candidate?.commit) || !isCommit(waiver.candidate?.tree)) {
+    return "it does not name a candidate commit and tree (write it with player-review.cjs waive)";
+  }
+  if (typeof waiver.reason !== "string" || !waiver.reason.trim()) return "its reason is empty";
+  if (typeof waiver.owner !== "string" || !waiver.owner.trim()) return "it names no owner";
+  const commit = waiver.candidate.commit;
+  try { git(project, ["merge-base", "--is-ancestor", commit, "HEAD"]); } catch {
+    return `it is bound to ${short(commit)}, which is not in this branch's history`;
+  }
+  const later = git(project, ["diff", "--no-renames", "--name-only", "-z", commit, "HEAD"]).split("\0").filter(Boolean)
+    .filter(name => !under(name, WAIVERS));
+  if (later.length) return `it is bound to ${short(commit)}, but ${listed(later)} changed after it; a waiver covers one exact candidate`;
+  const tree = git(project, ["rev-parse", "--verify", `${commit}^{tree}`]).trim();
+  if (waiver.candidate.tree !== tree) return `its tree ${short(waiver.candidate.tree)} is not the tree of ${short(commit)} (${short(tree)})`;
+  const owners = targetOwners(project, conf);
+  if (!owners.includes(waiver.owner)) {
+    return `owner "${waiver.owner}" is not listed in player_review.owners of ${conf.base_ref}${owners.length ? ` (listed: ${owners.join(", ")})` : " (none are)"}`;
+  }
+  if (!waiver.signer_session || !waiver.author_session) return "it names no signer or author session";
+  if (waiver.signer_session === waiver.author_session) return "it was signed by the author's own session; an owner signs from a different session";
+  return null;
+}
+
+// The newest waiver this branch added, judged against HEAD; null when there is none.
+function waiverState(project, conf) {
+  const names = git(project, ["diff", "--no-renames", "--name-only", "-z", "--diff-filter=AM", mergeBase(project, conf), "HEAD", "--", WAIVERS])
+    .split("\0").filter(Boolean);
+  if (!names.length) return null;
+  const waivers = names.map(file => {
+    try { return { file, data: JSON.parse(git(project, ["show", `HEAD:${file}`])) }; } catch { return { file, data: null }; }
+  });
+  const broken = waivers.find(entry => !entry.data || typeof entry.data !== "object");
+  if (broken) return { required: true, state: "invalid waiver", detail: `invalid waiver ${broken.file}: it is not valid JSON` };
+  const { file, data } = waivers.sort((a, b) => String(b.data.signed_at).localeCompare(String(a.data.signed_at)))[0];
+  const reason = waiverProblem(project, conf, data);
+  if (reason) return { required: true, state: "invalid waiver", detail: `invalid waiver ${file}: ${reason}` };
+  return {
+    required: true, state: "waived", waiver: data,
+    detail: `by owner ${data.owner} — ${data.reason.trim()} (candidate ${short(data.candidate.commit)}, signed ${String(data.signed_at).slice(0, 10)} ` +
+      `by session ${data.signer_session}; ${file})`,
+  };
+}
+
+function waive(options) {
+  const conf = settings(options.project);
+  if (!conf) throw new UsageError(".ai-dev-kit/gate-contract.json declares no player_review");
+  const owner = options.owner?.trim();
+  if (!owner) throw new UsageError("waive needs --owner: an owner listed in player_review.owners");
+  const reason = options.reason?.trim();
+  if (!reason) throw new UsageError("waive needs --reason: why this change may merge without a player review");
+  const signer = session(options.session);
+  const { committed, pending } = changes(options.project, conf);
+  if (pending.length) throw new Refusal(`commit the player-visible changes first; a waiver is bound to a commit (${listed(pending)})`);
+  if (!committed.length) throw new Refusal("no player-visible files changed on this branch; there is nothing to waive");
+  const build = candidate(options.project, conf);
+  const owners = targetOwners(options.project, conf);
+  if (!owners.includes(owner)) {
+    throw new Refusal(`owner "${owner}" is not listed in player_review.owners of ${conf.base_ref}${owners.length ? ` (listed: ${owners.join(", ")})` : " (none are)"}`);
+  }
+  const root = reviewRoot(options.project, false);
+  let sheet = null;
+  if (options.request !== undefined) {
+    if (!ID.test(options.request)) throw new UsageError("--request takes an id as printed by request");
+    sheet = readJson(path.join(root, options.request, "playtest.json"));
+  } else {
+    let names = [];
+    try { names = fs.readdirSync(root).filter(name => ID.test(name)); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    sheet = names.map(name => readJson(path.join(root, name, "playtest.json"))).filter(entry => entry?.candidate?.commit === build.commit)
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] ?? null;
+  }
+  if (!sheet || sheet.candidate?.commit !== build.commit) {
+    throw new Refusal(`no playtest request for ${short(build.commit)}: the author's session records the candidate with player-review.cjs request, ` +
+      "so the waiver can name the author's session");
+  }
+  if (signer === sheet.author_session) {
+    throw new Refusal(`this session (${signer}) requested the review of its own change; an owner signs the waiver from a different session`);
+  }
+  const file = `${WAIVERS}/${build.commit}.json`;
+  // check-ignore rejects --literal-pathspecs, so it runs without the git() helper.
+  const ignored = spawnSync("git", ["-C", options.project, "check-ignore", "-q", "--no-index", file], { encoding: "utf8" });
+  if (ignored.status === 0) {
+    throw new Refusal(`${file} is ignored by Git, but a waiver must be tracked: add "!${WAIVERS}/" to .gitignore after the rule that ignores .ai-dev-kit`);
+  }
+  if (ignored.status !== 1) throw new Error(`git check-ignore ${file} failed: ${ignored.stderr.trim()}`);
+  fs.mkdirSync(path.join(options.project, WAIVERS), { recursive: true });
+  writeJson(path.join(options.project, file), {
+    schema_version: 1, candidate: { commit: build.commit, tree: build.tree }, owner, reason,
+    signed_at: new Date().toISOString(), signer_session: signer, author_session: sheet.author_session, request: sheet.id,
+  });
+  process.stdout.write(`waiver=${file}\n` +
+    `Commit it by itself, for example: git add ${file} && git commit -m "chore(player-review): waive the player review of ${short(build.commit)}"\n` +
+    `It stops counting as soon as any other file changes after ${short(build.commit)}.\n`);
+}
+
 function check(options) {
   // The project gate loads the same contract and reports its errors; failing
   // here first would name the player review as the cause and hide that report.
   try { settings(options.project); } catch { return 0; }
   const result = evaluate(options.project);
+  if (result.state === "waived") {
+    process.stdout.write(`player review: WAIVED ${result.detail}\n`);
+    return WARN;
+  }
   if (!result.required || result.state === "passed") {
     if (result.state === "passed") process.stdout.write(`player review: passed — ${result.detail}\n`);
     return 0;
@@ -407,6 +533,7 @@ function check(options) {
 function status(options) {
   const result = evaluate(options.project);
   process.stdout.write(options.json ? `${JSON.stringify(result, null, 2)}\n`
+    : result.state === "waived" ? `player review: WAIVED ${result.detail}\n`
     : `player review: ${result.state}${result.detail ? ` — ${result.detail}` : ""}\n`);
 }
 
@@ -417,6 +544,7 @@ if (require.main === module) {
     const options = parse(process.argv.slice(2));
     if (options.command === "request") request(options);
     else if (options.command === "file") file(options);
+    else if (options.command === "waive") waive(options);
     else if (options.command === "check") process.exitCode = check(options);
     else status(options);
   } catch (error) {

@@ -8,6 +8,23 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Added
+- Owner waiver for player reviews: `player-review.cjs waive --owner <owner>
+  --reason <text>` writes a tracked
+  `.ai-dev-kit/player-review-waivers/<commit>.json` bound to the candidate's
+  full commit SHA and tree hash, with the owner, reason, time, signing session
+  and author session. The contract's new `player_review.owners` lists who may
+  waive, read from `base_ref` so a branch cannot add its own owner. The
+  waiver is committed alone on top of the candidate and lapses when any other
+  file changes after it. The signing session must differ from the author's
+  session recorded by `request`. merge and integrate pass a valid waiver and
+  print `player review: WAIVED by owner <owner> — <reason>`, as does
+  `--phase status`; merge-guardian repeats it in its verdict. An owner not
+  listed, another commit or tree, an empty reason or an author-signed waiver
+  fails merge with `invalid waiver <file>: <why>`; preflight still only warns.
+  `references/player-review.md` states that session ids are not identity
+  authentication.
+
 ## [0.22.0] - 2026-10-24
 
 ### Added

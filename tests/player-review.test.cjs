@@ -22,9 +22,10 @@ const gatePath = path.join(kit, "scripts/skill-first-gate.sh");
 const reviewPath = path.join(kit, "scripts/player-review.cjs");
 const resourceLock = path.join(kit, "scripts/resource-lock.cjs");
 const workflow = ".ai-dev-kit/workflow";
-const AUTHOR = "author-session-1", REVIEWER = "reviewer-session-2";
+const AUTHOR = "author-session-1", REVIEWER = "reviewer-session-2", OWNER = "owner-session-3";
+const WAIVERS = ".ai-dev-kit/player-review-waivers";
 
-function fixture(t, playerReview = { paths: ["game"], exclude: ["game/testing"], lock: "assets.lock", pool: "godot" }) {
+function fixture(t, playerReview = { paths: ["game"], exclude: ["game/testing"], lock: "assets.lock", pool: "godot", owners: ["lead"] }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aidk-player-review-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const project = path.join(root, "project");
@@ -260,6 +261,10 @@ test("an invalid player_review contract fails the gate with the setting named", 
   f.saveContract();
   f.commit("invalid keep");
   assert.match(f.gate("preflight", 2), /player_review.keep_days must be a whole number of days from 1 to 3650/);
+  f.contract.player_review = { paths: ["game"], owners: ["lead", "lead"] };
+  f.saveContract();
+  f.commit("duplicate owner");
+  assert.match(f.gate("preflight", 2), /player_review.owners must list distinct owner names who may waive a player review/);
   f.contract.player_review = { paths: ["game"], colour: "red" };
   f.saveContract();
   f.commit("unknown key");
@@ -299,3 +304,97 @@ test("prune keeps a filed review's evidence until keep_until and removes it afte
   fs.utimesSync(out, old, old);
   assert.match(prune([]).stdout, /would remove evidence .*000000000001-/);
 });
+
+// A waiver as player-review.cjs waive writes it, for the cases a tool never writes.
+function forgeWaiver(f, overrides = {}) {
+  const commit = f.git("rev-parse", "HEAD").trim();
+  const waiver = { schema_version: 1, candidate: { commit, tree: f.git("rev-parse", "HEAD^{tree}").trim() }, owner: "lead",
+    reason: "Text-only label change", signed_at: new Date().toISOString(), signer_session: OWNER, author_session: AUTHOR, request: "000000000000-000000",
+    ...overrides };
+  f.write(`${WAIVERS}/${commit}.json`, JSON.stringify(waiver, null, 2) + "\n");
+  f.commit("waive");
+  return `${WAIVERS}/${commit}.json`;
+}
+
+test("an owner's waiver of the exact candidate lets merge pass and is shown as WAIVED in merge and status", t => {
+  const f = fixture(t);
+  f.write("game/menu.txt", "Start Game\n");
+  const head = f.commit("rename start");
+  f.request();
+  const out = f.review(["waive", "--owner", "lead", "--reason", "Text-only label change, approved in the design review"], { session: OWNER });
+  const file = out.match(/^waiver=(\S+)$/m)[1];
+  assert.equal(file, `${WAIVERS}/${head}.json`);
+  assert.match(out, /Commit it by itself/);
+  const waiver = JSON.parse(fs.readFileSync(path.join(f.project, file), "utf8"));
+  assert.deepEqual([waiver.candidate.commit, waiver.candidate.tree, waiver.owner, waiver.signer_session, waiver.author_session],
+    [head, f.git("rev-parse", "HEAD^{tree}").trim(), "lead", OWNER, AUTHOR]);
+  assert.match(waiver.signed_at, /^\d{4}-\d{2}-\d{2}T/);
+  f.commit("waive");
+  const line = new RegExp(`^WARN: player review: WAIVED by owner lead — Text-only label change, approved in the design review ` +
+    `\\(candidate ${head.slice(0, 12)}, signed \\d{4}-\\d{2}-\\d{2} by session ${OWNER}; ${file.replace(/\./g, "\\.")}\\)$`, "m");
+  assert.match(f.gate("preflight"), line);
+  const merge = f.gate("merge");
+  assert.match(merge, line);
+  assert.match(merge, /gate passed with warnings/);
+  const status = f.gate("status");
+  assert.match(status, /^ {2}player review: WAIVED by owner lead — Text-only label change/m);
+  assert.match(status, /merge readiness: ready/);
+});
+
+test("the author's session cannot waive its own change, and a waiver it signed blocks merge", t => {
+  const f = fixture(t);
+  f.write("game/menu.txt", "Start Game\n");
+  f.commit("rename start");
+  f.request();
+  assert.match(f.review(["waive", "--owner", "lead", "--reason", "trust me"], { session: AUTHOR, expected: 1 }),
+    /this session \(author-session-1\) requested the review of its own change; an owner signs the waiver from a different session/);
+  const file = forgeWaiver(f, { signer_session: AUTHOR });
+  assert.match(f.gate("preflight"), /^WARN: player review: invalid waiver .*: it was signed by the author's own session/m);
+  assert.match(f.gate("merge", 2), new RegExp(`^FAIL: player review: invalid waiver ${file.replace(/\./g, "\\.")}: it was signed by the author's own session`, "m"));
+});
+
+test("a waiver needs an owner listed by the target branch and a reason", t => {
+  const f = fixture(t);
+  f.contract.player_review.owners = ["lead", "intruder"];
+  f.saveContract();
+  f.write("game/menu.txt", "Start Game\n");
+  f.commit("rename start and list a new owner on the branch");
+  f.request();
+  assert.match(f.review(["waive", "--owner", "intruder", "--reason", "fine"], { session: OWNER, expected: 1 }),
+    /owner "intruder" is not listed in player_review.owners of main \(listed: lead\)/);
+  assert.match(f.review(["waive", "--owner", "lead", "--reason", "   "], { session: OWNER, expected: 2 }), /waive needs --reason/);
+  forgeWaiver(f, { owner: "intruder" });
+  assert.match(f.gate("merge", 2), /invalid waiver .*: owner "intruder" is not listed in player_review.owners of main \(listed: lead\)/);
+  f.git("reset", "-q", "--hard", "HEAD~1");
+  forgeWaiver(f, { reason: "" });
+  assert.match(f.gate("merge", 2), /invalid waiver .*: its reason is empty/);
+});
+
+test("a waiver stops counting once anything but waivers changes after its candidate", t => {
+  const f = fixture(t);
+  f.write("game/menu.txt", "Start Game\n");
+  const candidate = f.commit("rename start");
+  f.request();
+  f.review(["waive", "--owner", "lead", "--reason", "Label only"], { session: OWNER });
+  f.commit("waive");
+  f.write("game/menu.txt", "Start New Game\n");
+  f.commit("rename again");
+  assert.match(f.gate("merge", 2), new RegExp(`invalid waiver .*: it is bound to ${candidate.slice(0, 12)}, but 1: game/menu.txt changed after it; a waiver covers one exact candidate`));
+  f.git("reset", "-q", "--hard", "HEAD~2");
+  forgeWaiver(f, { candidate: { commit: candidate, tree: "f".repeat(40) } });
+  assert.match(f.gate("merge", 2), /invalid waiver .*: its tree ffffffffffff is not the tree of/);
+});
+
+test("a waiver needs the author's playtest request for the commit and a tracked waiver file", t => {
+  const f = fixture(t);
+  f.write("game/menu.txt", "Start Game\n");
+  const head = f.commit("rename start");
+  assert.match(f.review(["waive", "--owner", "lead", "--reason", "Label only"], { session: OWNER, expected: 1 }),
+    new RegExp(`no playtest request for ${head.slice(0, 12)}: the author's session records the candidate with player-review.cjs request`));
+  f.write(".gitignore", `${workflow}/\n${WAIVERS}/\n`);
+  const ignored = f.commit("ignore waivers");
+  f.request();
+  assert.match(f.review(["waive", "--owner", "lead", "--reason", "Label only"], { session: OWNER, expected: 1 }),
+    new RegExp(`${WAIVERS}/${ignored}.json is ignored by Git, but a waiver must be tracked`));
+});
+

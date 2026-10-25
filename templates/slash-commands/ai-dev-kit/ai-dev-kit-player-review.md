@@ -38,5 +38,14 @@ workstation, and file:
 node "{{AI_DEV_KIT_PATH}}/scripts/player-review.cjs" file --project "{{PROJECT_PATH}}" --request <id> --evidence <claim out dir>
 ```
 
+Owner (you are listed in the contract's `player_review.owners` and were asked
+to let a change merge without a review): from your own session, not the
+author's, write a waiver for the committed candidate and commit the printed
+file by itself. Any later change to another file voids it.
+
+```bash
+node "{{AI_DEV_KIT_PATH}}/scripts/player-review.cjs" waive --project "{{PROJECT_PATH}}" --owner <you> --reason "<why>"
+```
+
 `player-review.cjs status --project "{{PROJECT_PATH}}"` shows whether the
 current commit needs a review and why it does not yet pass.

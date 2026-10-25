@@ -21,7 +21,8 @@ The project lists its player-visible paths in the tracked
   "lock": "data/objects.lock.yaml",
   "rubric": "docs/qa/player-rubric.md",
   "specs": ["docs/art/art-bible.md", "docs/design/ui.md"],
-  "keep_days": 30
+  "keep_days": 30,
+  "owners": ["lead-designer"]
 }
 ```
 
@@ -33,14 +34,17 @@ The project lists its player-visible paths in the tracked
   `loop-workflow.md`). `lock` is the asset lock file whose hash names the asset
   version. `rubric` and `specs` are the only project documents a reviewer reads.
   `keep_days` (default 30) is how long filed evidence is kept.
+- `owners` names the people who may waive a review (see "Waivers"). Without
+  it, nobody can.
 
 The gate (`skill-first-gate.sh`):
 
 - `--phase preflight` reports a missing or invalid review as a warning, so
   authors see it early without blocking their loop.
 - `--phase merge` and `--phase integrate` fail unless the latest review filed
-  for the current commit passes every check below; `--phase status` shows the
-  state and counts it against merge readiness.
+  for the current commit passes every check below, or a valid waiver covers
+  the change; `--phase status` shows the state and counts it against merge
+  readiness.
 - Block reasons, each printed as one line:
   - uncommitted player-visible changes (no commit-bound review can cover them);
   - no review filed for the current commit;
@@ -51,16 +55,74 @@ The gate (`skill-first-gate.sh`):
   - the evidence is gone, its manifest changed, a file in it changed or is
     missing, or it does not cite a workstation claim.
 
-There is no waiver: a player-visible change without a passing review does not
-merge. A later, failing review of the same commit replaces an earlier pass.
+A later, failing review of the same commit replaces an earlier pass.
+
+## Waivers
+
+An owner may let one exact candidate merge without a player review, for
+example a text-only fix or a change the owner already played. The waiver is a
+tracked file in the repository, so it is reviewed and merged with the change.
+
+1. The author commits the change and runs `player-review.cjs request` as for a
+   review. The request records the author's session, which the waiver needs.
+2. The owner, in a session of their own (not the author's), runs:
+
+   ```bash
+   node <kit>/scripts/player-review.cjs waive --owner lead-designer \
+     --reason "Label text only; checked in the design review on 2026-10-24"
+   ```
+
+   It writes `.ai-dev-kit/player-review-waivers/<commit>.json` with the
+   candidate's full commit SHA and tree hash, the owner, the reason, the time,
+   the signing session, the author's session and the request id.
+3. Commit that file by itself, directly on top of the candidate.
+
+`waive` refuses an owner not listed under `player_review.owners`, an empty
+reason, uncommitted player-visible changes, a commit without a playtest
+request, a session that is the request's author session, and a waiver path
+that Git ignores (add `!.ai-dev-kit/player-review-waivers/` to `.gitignore`
+after the rule that ignores `.ai-dev-kit`).
+
+The gate considers the newest waiver the branch added (by `signed_at`) when no
+passing review covers HEAD. The waiver passes only if:
+
+- its candidate commit is in HEAD's history and nothing but waiver files
+  changed after it, and its tree hash is that commit's tree. Any other change,
+  including a new commit of the same change, voids the waiver; the owner signs
+  a new one for the new candidate;
+- its owner is listed in `player_review.owners` of `base_ref` as it is on the
+  target branch. A branch cannot list a new owner and waive its own change in
+  the same merge;
+- its reason is not empty;
+- its signing session differs from the author's session.
+
+A waiver that fails one of these is reported as `invalid waiver <file>: <why>`.
+merge and integrate fail on it; preflight warns, as for a missing review.
+
+A valid waiver passes merge, integrate and status, and the gate prints it as a
+warning so it stays visible:
+
+```text
+WARN: player review: WAIVED by owner lead-designer — Label text only; ... (candidate 3f2a9c1b7d4e, signed 2026-10-24 by session 7c1e...; .ai-dev-kit/player-review-waivers/<commit>.json)
+```
+
+`--phase status` shows the same `player review: WAIVED ...` line, and
+merge-guardian repeats the owner and the reason in its verdict.
 
 ## Sessions
 
 Each command identifies its session by `--session <id>`, else
 `AI_DEV_KIT_SESSION_ID`, else `CLAUDE_CODE_SESSION_ID` (set by Claude Code).
 Harnesses without an exported id pass `--session` with their conversation or
-thread id. The check stops a session from approving its own work by mistake;
-it is not authentication.
+thread id.
+
+Session ids are not identity authentication. Anyone who can run the commands
+can pass any `--session` or `--owner`, and anyone who can commit can write a
+waiver file by hand. The checks stop a session from approving or waiving its
+own work by mistake, and a waiver names its owner in a file that is reviewed
+with the branch. They do not prove who ran them. Strong identity is left for
+later: once a shared coordination center records reviews and waivers itself,
+the center confirms the signer.
 
 ## Author: Request A Review
 

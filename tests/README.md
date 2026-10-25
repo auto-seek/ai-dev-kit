@@ -138,8 +138,14 @@ No Cascade executable or test-framework plugin is needed for this suite.
   changed, missing or deleted evidence blocks; filing refuses evidence without
   a workstation claim, a report for another build or an incomplete report;
   uncommitted player-visible changes are refused and block; a receipt for
-  another tree is refused; invalid `player_review` settings fail the gate; and
-  prune keeps filed evidence until `keep_until`.
+  another tree is refused; invalid `player_review` settings fail the gate;
+  prune keeps filed evidence until `keep_until`; an owner's waiver of the exact
+  candidate passes merge and shows as WAIVED in merge and status; the author's
+  session cannot waive, and a waiver it signed blocks; an owner missing from
+  the target branch's `owners` (even when the branch lists it) and an empty
+  reason are refused and block; a later change or another tree voids a waiver;
+  and `waive` refuses a commit without a playtest request or an ignored waiver
+  path.
 - **`workstation-pool.test.cjs`** (in `test:team`) — real CLI processes against
   workstation pools in `scripts/resource-lock.cjs`, with `fake-docker.cjs` standing
   in for the Docker CLI only: a burst of nine runs on three workstations never

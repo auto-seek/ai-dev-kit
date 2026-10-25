@@ -106,7 +106,7 @@ function loadContract(project) {
 // Player-visible roots are literal repository-relative paths, like test-scope
 // roots: a file is player-visible when it is a root or lies under one.
 function playerReviewContract(review) {
-  objectKeys(review, ["paths", "exclude", "pool", "lock", "rubric", "specs", "keep_days"], "player_review");
+  objectKeys(review, ["paths", "exclude", "pool", "lock", "rubric", "specs", "keep_days", "owners"], "player_review");
   if (!Array.isArray(review.paths) || !review.paths.length) throw new Error("player_review.paths must list the roots of player-visible files");
   for (const root of review.paths) relativeFile(root, "player_review.paths entries");
   if (review.exclude !== undefined) {
@@ -123,6 +123,10 @@ function playerReviewContract(review) {
   }
   if (review.keep_days !== undefined && (!Number.isSafeInteger(review.keep_days) || review.keep_days < 1 || review.keep_days > 3650)) {
     throw new Error("player_review.keep_days must be a whole number of days from 1 to 3650");
+  }
+  if (review.owners !== undefined && (!Array.isArray(review.owners) || review.owners.some(owner =>
+    typeof owner !== "string" || !owner.trim() || owner !== owner.trim() || owner.length > 128) || new Set(review.owners).size !== review.owners.length)) {
+    throw new Error("player_review.owners must list distinct owner names who may waive a player review");
   }
 }
 function taskId(branch, label = "task-sections") {
@@ -638,7 +642,7 @@ function checkoutStatus(checkout, branch, override, shared, findings) {
     if (!report.test_review.ok) report.problems.push("test review not current");
     // Loaded here: player-review.cjs requires this module for loadContract.
     report.player_review = require("./player-review.cjs").evaluate(checkout);
-    if (report.player_review.required && report.player_review.state !== "passed") report.problems.push(`player review ${report.player_review.state}`);
+    if (report.player_review.required && !["passed", "waived"].includes(report.player_review.state)) report.problems.push(`player review ${report.player_review.state}`);
   } catch (error) {
     report.error = error.message;
     report.problems.push(error.message);
@@ -694,7 +698,8 @@ function renderStatus(report) {
     if (item.requirements) lines.push(`  requirements: ${item.requirements.ok ? `ok (${item.requirements.path}${item.requirements.task_id ? `, task ${item.requirements.task_id}` : ""})` : item.requirements.detail}`);
     if (item.subtraction) lines.push(`  subtraction: ${!item.subtraction.ok ? item.subtraction.detail : item.subtraction.disabled ? "gate disabled" : `debt ${item.subtraction.debt} of ${item.subtraction.threshold}`}`);
     if (item.test_review) lines.push(`  test review: ${item.test_review.ok ? "ok" : item.test_review.detail}`);
-    if (item.player_review?.required) lines.push(`  player review: ${item.player_review.state} — ${item.player_review.detail}`);
+    if (item.player_review?.state === "waived") lines.push(`  player review: WAIVED ${item.player_review.detail}`);
+    else if (item.player_review?.required) lines.push(`  player review: ${item.player_review.state} — ${item.player_review.detail}`);
     if (item.note) lines.push(`  note: ${item.note}`);
     lines.push(`  merge readiness: ${item.merge_ready === null ? "unknown" : item.merge_ready ? "ready" : `not ready — ${item.problems.join("; ")}`}`);
   }

@@ -47,13 +47,18 @@ Block if:
   the reviewed checkout's tracked `.ai-dev-kit/test-scope.json` policy;
 - player-visible files changed (the contract's `player_review.paths`) and there
   is no passing player review from a different session bound to the current
-  commit and tree, with its workstation evidence unchanged
-  (`references/player-review.md`; the merge gate prints the reason, and there is
-  no waiver);
+  commit and tree, with its workstation evidence unchanged, nor a valid owner
+  waiver (`references/player-review.md`; the merge gate prints the reason,
+  including `invalid waiver <file>: <why>`);
 - docs or development ledgers contradict implemented behavior;
 - changed or affected comments materially mislead maintainers or API users
   (cite code/contract evidence and risk per `references/implementation-discipline.md`,
   not a wording preference; the shell gate does not judge comment quality);
 - commits are incoherent or do not use conventional commit style.
+
+When the gate prints `player review: WAIVED by owner <owner> — <reason> ...`,
+the change merges without a player review. Say so near the top of the verdict:
+`player review: WAIVED by <owner>: <reason>` with the candidate commit, so the
+merge is not mistaken for a played one.
 
 Return `MERGE READY` or `NOT READY` with blocking findings first.
