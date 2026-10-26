@@ -178,7 +178,7 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `deploy/cascade-runtime/` carries only the .5 wheel (SHA256 `bb6ff0ed…d1ec9d6`), `node-collaboration.patch`, `node-storage-concurrency-nc5.patch`, `NODE_PROVENANCE.json` and the vendored dependencies byte-identical to the source; the .3 and .1 wheels and the .3 patch are dropped with their `NODE_SHA256SUMS` lines, which match the shipped files and pass `shasum -c`.
 - [x] `SKILL.md` and `references/task-cycle.md` say .3 and .5 run side by side, how a .3 or .1 agent upgrades (update the plugin, re-run join in the same directory) and how to roll back (0.25.0); source records name `110ffe2` and .5.
 - [x] `tests/cascade-center-config.test.cjs` uses the .5 wheel; `npm run build`, skill validation, gitleaks and an internal-address grep pass.
-- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review.
+- [x] Version bump in all three manifests and the release, done by the kit maintainer after review (0.26.0).
 
 ## workstation-pool
 

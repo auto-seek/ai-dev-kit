@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-26
+
 ### Changed
 - `cascade-center-agent`: `deploy/cascade-runtime/NODE_PROVENANCE.json` now
   comes from CascadeCenter-web `2c2c515` (previously `b0895ee`). It records that
