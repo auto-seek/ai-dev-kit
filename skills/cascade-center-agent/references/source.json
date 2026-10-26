@@ -1,6 +1,6 @@
 {
   "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
-  "sourceCommit": "2c2c515c078a58fae401f1c78c36a09e7a1ad2a5",
+  "sourceCommit": "110ffe2b08ae282d1263275c6c0b26aea100a3f2",
   "files": [
     "scripts/cascade-node-client.cjs",
     "scripts/cascade-node-join.cjs",
@@ -13,10 +13,10 @@
     "scripts/cascade-portal-publish.py",
     "scripts/cascade-process.cjs"
   ],
-  "runtime": "0.8.2+nodecollab.3",
-  "packagedAt": "2026-10-25",
+  "runtime": "0.8.2+nodecollab.5",
+  "packagedAt": "2026-10-26",
   "localModifications": {
     "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source.",
-    "deploy/cascade-runtime/NODE_SHA256SUMS": "The 0.8.2+nodecollab.1 wheel and its line are left out; agents install only 0.8.2+nodecollab.3. Every other runtime file, including NODE_PROVENANCE.json, is byte-identical to the source."
+    "deploy/cascade-runtime/NODE_SHA256SUMS": "Only the 0.8.2+nodecollab.5 package is shipped: the .3 and .1 wheels and node-storage-concurrency.patch (the .3 patch) are left out together with their lines, so the manifest lists exactly the shipped files. Every other runtime file, including NODE_PROVENANCE.json, is byte-identical to the source."
   }
 }

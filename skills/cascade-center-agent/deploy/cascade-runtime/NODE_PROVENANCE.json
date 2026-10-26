@@ -1,14 +1,18 @@
 {
-  "version": "0.8.2+nodecollab.3",
-  "release_status": "deployed on the center server 2026-10-25 (receive guard, publisher and center runtime); agents upgrading through ai-dev-kit; local build, not an upstream tag",
+  "version": "0.8.2+nodecollab.5",
+  "release_status": "release candidate for agents and the center publisher: local build, not an upstream tag, not deployed",
   "source_base": "bcffbf13c32d188cc9655d2e8f19719742480b7a",
-  "patches": ["node-collaboration.patch", "node-storage-concurrency.patch"],
+  "patches": [
+    "node-collaboration.patch",
+    "node-storage-concurrency-nc5.patch"
+  ],
   "source_commits": {
     "0.8.2+nodecollab.1": "56475224ecf2f582f59fe40cbc9ba77248db8caf",
-    "0.8.2+nodecollab.3": "df5121c651e5afcec49a269cf895de577a2269e8"
+    "0.8.2+nodecollab.3": "df5121c651e5afcec49a269cf895de577a2269e8",
+    "0.8.2+nodecollab.5": "cef0be479cb5f0eeab52398c692d4fe002418d46"
   },
   "source_branch": "claude/storage-concurrency-df5624 (local; not pushed)",
-  "superseded": "0.8.2+nodecollab.2 was an internal intermediate build; it is not distributed",
+  "superseded": "0.8.2+nodecollab.2 was an internal intermediate build; it is not distributed. 0.8.2+nodecollab.4 is reserved and was not built",
   "distribution": "private wheel; not an upstream tag",
   "dependencies": {
     "filelock": "3.29.0",
@@ -24,11 +28,26 @@
     "receive-pack must advertise the atomic capability (stock Git 2.4 or later)",
     "receive.autogc false in the coordination repository; maintenance only with writers paused"
   ],
-  "previous": {
-    "version": "0.8.2+nodecollab.1",
-    "wheel": "cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl",
-    "kept_for": "rollback, agents not yet upgraded, and the mixed-runtime test; the center server ran it until 2026-10-25"
-  },
-  "verification_report": "../../docs/verification/node-runtime-heartbeat-20261019.md",
-  "deployment_record": "../../docs/verification/nodecollab3-rollout-20261025.md"
+  "kept": [
+    {
+      "version": "0.8.2+nodecollab.3",
+      "wheel": "cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl",
+      "patches": [
+        "node-collaboration.patch",
+        "node-storage-concurrency.patch"
+      ],
+      "release_status": "deployed on the center server 2026-10-25 (receive guard, publisher and center runtime)",
+      "kept_for": "the receive guard (cascade-node-receive.py pins it), rollback of the center and agents from nodecollab.5, agents not yet upgraded, and the mixed-runtime tests",
+      "deployment_record": "../../docs/verification/nodecollab3-rollout-20261025.md"
+    },
+    {
+      "version": "0.8.2+nodecollab.1",
+      "wheel": "cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl",
+      "patches": [
+        "node-collaboration.patch"
+      ],
+      "kept_for": "agents not yet upgraded while the receive guard runs without --require-runtime, and the mixed-runtime tests of that guard; the center server ran it until 2026-10-25"
+    }
+  ],
+  "verification_report": "../../docs/verification/nodecollab5-client-20261025.md"
 }

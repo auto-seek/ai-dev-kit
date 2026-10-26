@@ -1,8 +1,8 @@
 diff --git a/.ai-dev-kit/requirements.md b/.ai-dev-kit/requirements.md
-index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..69b5e3469034d9738ecf0a705013fdd2c7c1977a 100644
+index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..3a47ddcea3430d326da4260691e8bb2479e7486e 100644
 --- a/.ai-dev-kit/requirements.md
 +++ b/.ai-dev-kit/requirements.md
-@@ -37,3 +37,29 @@
+@@ -37,3 +37,39 @@
  - [x] Record and replay reservation release without losing task context or contracts; expose expiry through claim and check-timeouts.
  - [x] Verify clock boundary, renewals, old state, concurrent claim and real file/Git backends; complete test review.
  - [x] Document the runtime installation and shared-center cleanup procedure, including participant and recovery-tool upgrade limitations.
@@ -32,14 +32,100 @@ index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..69b5e3469034d9738ecf0a705013fdd2
 +- [x] Refuse renewal after lease expiry for published and unpublished tasks alike; release the claim and report STALE_TOKEN.
 +- [x] Report unusable heartbeats in heartbeat_errors of list-nodes and check while expiry ignores them.
 +- [x] Limit write redo to 60 seconds and return STATE_CONFLICT afterwards; list the incompatible changes in the changelog.
++
++## git-window (nodecollab.5)
++
++- [x] Construct GitStorage without any Git command or state read; renew from the cached refs and graph object with one heartbeat push, fetching only after a refused push.
++- [x] Shorten the fetch-to-push window: redo from the lost commit with a two-tree read-tree, trust a recorded clean copy across processes, continue the event chain head from a digest-checked prefix, take the base tree with the cached refs, no mktree or check-ref-format processes, no automatic maintenance inside fetch.
++- [x] Make redo fair under bursts: the wait ceiling shrinks with the time already waited; keep the 60-second deadline and STATE_CONFLICT.
++- [x] Stamp runtime=0.8.2+nodecollab.5; keep refs, payloads and remote calls of nodecollab.3.
++- [x] Test: no Git call at construction, five-command renewal in a new process, single read-tree redo, recorded clean copy reuse and restore, chain head after foreign appends and replaced logs, namespace check against git check-ref-format, redo ceilings, remote calls with construction against nodecollab.1, .2 and .3.
++- [x] Prove interoperation with the released nodecollab.3: identical formats apart from the runtime marker, heartbeats honoured both ways, mixed agents on one namespace, and writes accepted by the center guard running on nodecollab.3 with --require-runtime.
++- [x] Let the 60-second deadline, not an attempt count, end redo.
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index babb0f2817d704b6494c079f4638927fdaae42a4..cdb7fb71c011a32b6904e9b77b05e35b696774d9 100644
+index babb0f2817d704b6494c079f4638927fdaae42a4..345fe2669d2270cf8984acaef4023182aacbfd80 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -3,6 +3,99 @@
+@@ -3,6 +3,175 @@
  All notable changes to this project will be documented in this file.
  Generated from [conventional commits](https://www.conventionalcommits.org/).
  
++## [0.8.2+nodecollab.5] - 2026-10-25
++
++Local build on top of 0.8.2+nodecollab.3, the client upgrade for centers that
++run nodecollab.3; not an upstream tag. The refs, commits, payloads and remote
++calls per operation are those of nodecollab.3; only the `runtime` value
++differs. nodecollab.4 is reserved.
++
++### Added
++
++- `tests/integration/test_git_storage_nc3_interop.py` against the
++  nodecollab.3 wheel (`CASCADE_NODECOLLAB3_WHEEL`): identical heartbeat and
++  state formats apart from the runtime marker, heartbeats of each runtime
++  honoured by the other, mixed agents contending on one namespace, and, with
++  `CASCADE_CENTER_GUARD`, this runtime's writes accepted by
++  CascadeCenter-web's receive guard running on nodecollab.3 with
++  `--require-runtime`.
++- The remote-call comparison counts construction too and adds a
++  nodecollab.3 column when `CASCADE_NODECOLLAB3_WHEEL` is set.
++
++### Changed
++
++- Constructing `GitStorage` no longer synchronizes: it runs no Git command
++  and reads no state. A renewal in a new process with a warm cache is now
++  one remote call (the heartbeat push) and five Git commands in all
++  (`for-each-ref`, `cat-file`, `commit-tree`, `push`, `update-ref`); it
++  fetches only when the push shows the cache was outdated. A write in a new
++  process is one fetch and one push instead of two fetches and one push.
++- Shorter window between reading the state and pushing on it:
++  - a redo after a lost compare-and-swap moves the working copy from the lost
++    commit to the winner's with one two-tree `read-tree` instead of checking
++    out every file;
++  - the next process trusts a clean working copy recorded in
++    `<cache>/git-state.clean` instead of rehashing it;
++  - the event log's chain head is kept with a SHA-256 of the bytes it covers
++    (`<cache>/git-state.events-head` for Git), so an append parses only the
++    lines after that prefix;
++  - the base tree comes with the cached refs, the empty tree OID is known
++    without `mktree`, and namespace validation needs no Git process;
++  - fetches skip Git's automatic maintenance, which would run inside the
++    window; it runs after a successful publish when the cache holds about
++    6700 loose objects or 50 packs.
++- Fairer redo under bursts: the wait before a redo is drawn below
++  `min(50 ms * 2^(attempt-1), 400 ms, 400 ms * exp(-waited / 1.5 s))`, at
++  least 10 ms. Writers that have waited longest redo first; newcomers still
++  back off up to 400 ms. In a simulation of the race this cut p99 write
++  latency by about 20% and raised attempts per second by about 20%. The
++  60-second deadline and `STATE_CONFLICT` result are unchanged.
++
++### Fixed
++
++- Redo of a lost compare-and-swap could stop after 1000 attempts before the
++  60-second deadline once fast attempts waited only the 10 ms floor; the
++  deadline now ends it.
++- `FileEventStore.emit` chained each event to the head it had read when it
++  was created, so a store kept across another process's append could fork the
++  chain. It now reads the head on disk before every append.
++- In-process cancel notifiers registered with a Git storage's token store are
++  kept across state changes; the file layer is no longer rebuilt per commit.
++
++### Breaking changes
++
++- `GitStorage.state_oid` is `None` until the first `lock()`,
++  `read_snapshot()` or `renewal_view()`; `load()`, `exists()` and the
++  components used outside those read the local cache as last synchronized
++  instead of the state at construction.
++- `StorageProtocol.events`, `tokens`, `ops`, `content` and `heartbeats` are
++  read-only properties. Backends that set plain attributes still conform;
++  code that assigned `GitStorage.events` and the like must stop.
++- `FileEventStore` no longer has `_last_hash` and reads nothing at
++  construction. `FileStorage.refresh()` makes it read its clock from
++  `graph.json` again on next use.
++- State commits and heartbeat payloads carry `runtime=0.8.2+nodecollab.5`. A
++  receive hook must accept it; CascadeCenter-web's guard accepts every
++  nodecollab.N with N ≥ 3. Scripts that require the installed version to
++  equal `0.8.2+nodecollab.3` must accept `.5`.
++
 +## [0.8.2+nodecollab.3] - 2026-10-18
 +
 +Local build on top of 0.8.2+nodecollab.1; not an upstream tag. It includes the
@@ -137,10 +223,10 @@ index babb0f2817d704b6494c079f4638927fdaae42a4..cdb7fb71c011a32b6904e9b77b05e35b
  
  ### Fixed
 diff --git a/docs/development/feature-ledger.md b/docs/development/feature-ledger.md
-index f64ba225c95fd257ece868152daedbf8ea3859d9..2e98b00ae2c4311212cd926bdaf8e926293ae5c6 100644
+index f64ba225c95fd257ece868152daedbf8ea3859d9..0d4894c4c8ab4c0013677ffa8a4fbf5e8f7f742a 100644
 --- a/docs/development/feature-ledger.md
 +++ b/docs/development/feature-ledger.md
-@@ -68,3 +68,27 @@
+@@ -68,3 +68,39 @@
  - Coordination notes: only the center mutates task state; implementation agents do not touch the shared cloud namespace.
  - Review: Galileo independently approved source, four changed test files and the retry runbook; 72 focused checks plus 4 registry checks passed independently. Audit-field negative tests exposed and closed one replay validation defect.
  - Deployment: not performed. Shared namespace migration requires the other ACTIVE worker owners to coordinate a safe stop and compatible runtime upgrade.
@@ -168,13 +254,25 @@ index f64ba225c95fd257ece868152daedbf8ea3859d9..2e98b00ae2c4311212cd926bdaf8e926
 +- Tests: tests/integration/test_git_storage_heartbeats.py; test_git_storage_compat.py (needs CASCADE_LEGACY_WHEEL and CASCADE_NODECOLLAB2_WHEEL); test_git_storage_snapshot.py; tests/acceptance/git_storage_agent_load.py.
 +- Docs: docs/git-storage.md runtime contract; docs/git-heartbeat-refs.md; CHANGELOG.md.
 +- Deployment: blocked on a heartbeat-aware receive hook in CascadeCenter-web; then upgrade all participants; then switch the hook to refuse older writers.
++
++## git-window
++
++- Status: implemented on 2026-10-19, paused, completed on 2026-10-25 as the client upgrade after the nodecollab.3 server rollout; not pushed or released.
++- Branch: claude/storage-concurrency-df5624
++- Created: 2026-10-19
++- Goal: renewals that skip the constructor sync, a shorter and fairer state write window before the 20-agent rollout.
++- Scope: GitStorage construction, cache records and redo path, FileEventStore chain head, FileStorage clock, namespace validation, client redo backoff, docs and version 0.8.2+nodecollab.5.
++- Non-goals: no change to refs, payloads, remote calls per operation, fencing, the event chain format, replay or corruption handling; no CascadeCenter-web change; no production access.
++- Tests: tests/integration/test_git_storage_snapshot.py; test_git_storage_heartbeats.py; test_git_storage_compat.py (CASCADE_NODECOLLAB3_WHEEL adds the .3 column); test_git_storage_nc3_interop.py (CASCADE_NODECOLLAB3_WHEEL, CASCADE_CENTER_GUARD); tests/unit/test_events_unit.py; tests/unit/test_client.py; tests/unit/test_git_ref_lease.py.
++- Docs: docs/git-storage.md runtime contract; docs/git-heartbeat-refs.md; CHANGELOG.md.
++- Deployment: not performed. The center's guard already accepts nodecollab.N for N >= 3; center scripts that pin the installed version to .3 must accept .5; then agents upgrade one at a time.
 diff --git a/docs/git-heartbeat-refs.md b/docs/git-heartbeat-refs.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decddbd17cbe
+index 0000000000000000000000000000000000000000..0eb8a0985d927f3db3a6483bec98a990d7d5263b
 --- /dev/null
 +++ b/docs/git-heartbeat-refs.md
-@@ -0,0 +1,170 @@
-+# Git heartbeat refs: interface for receive hooks (0.8.2+nodecollab.3)
+@@ -0,0 +1,183 @@
++# Git heartbeat refs: interface for receive hooks (0.8.2+nodecollab.3 and later)
 +
 +From 0.8.2+nodecollab.3, Git storage renews leases with one heartbeat ref
 +per ACTIVE claim and writes state without a lease ref. This document is the
@@ -182,9 +280,15 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +below are in `cascade.types` and `cascade.core.node`, so a hook running the
 +same runtime can use them instead of reimplementing the rules.
 +
++0.8.2+nodecollab.5 writes exactly the same refs and objects; only the
++`runtime` value is `0.8.2+nodecollab.5`. "A pinned runtime" below means a
++runtime string the hook accepts. A hook should accept `0.8.2+nodecollab.N`
++for every N ≥ 3 (as CascadeCenter-web's `cascade-node-receive.py` does), so
++agents can move between heartbeat runtimes without a server change.
++
 +## Refs
 +
-+| Ref | Written by 0.8.2+nodecollab.3 |
++| Ref | Written by 0.8.2+nodecollab.3 and later |
 +|-----|-------------------------------|
 +| `refs/heads/cascade-state/<ns>` | every state change, with an expected OID |
 +| `refs/heads/cascade-heartbeat/<ns>/<key>` | claim, renewal, and the end of a claim |
@@ -211,7 +315,7 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +| `claim_token` | integer ≥ 1 (not boolean) | the claim's fencing token |
 +| `renewed_at` | finite number, Unix seconds | time of this renewal |
 +| `timeout` | finite number > 0, or null | lease length from `renewed_at` |
-+| `runtime` | string | `0.8.2+nodecollab.3` |
++| `runtime` | string | the writer's version, `0.8.2+nodecollab.3` or `0.8.2+nodecollab.5` |
 +
 +`Heartbeat.from_payload` enforces the keys and types. A malformed payload, a
 +payload of another namespace, or one whose task does not hash to the ref key
@@ -253,7 +357,8 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +| Any other state change | state, and may delete heartbeats whose claim is not ACTIVE in the new state |
 +| Compaction | state (new root commit) and the archive ref |
 +
-+A state commit message contains `runtime=0.8.2+nodecollab.3` on its own line.
++A state commit message contains `runtime=<version>` on its own line, for
++example `runtime=0.8.2+nodecollab.5`.
 +
 +## Verifying a push incrementally
 +
@@ -278,7 +383,7 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +2. `new` is a commit of at most 4096 bytes with the empty tree. Its parents are
 +   none when `old` is zero and exactly `[old]` otherwise.
 +3. The payload passes `Heartbeat.from_payload`; `namespace` is this namespace,
-+   `runtime` is the pinned runtime, and `heartbeat_key(task_id)` is the key.
++   `runtime` is a pinned runtime, and `heartbeat_key(task_id)` is the key.
 +4. In the new state the task exists and is ACTIVE, and its `agent_id` and
 +   `claim_token` equal the payload's.
 +5. The SSH writer is the payload's `agent_id`.
@@ -301,7 +406,7 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +
 +State ref update:
 +
-+10. The commit message has the line `runtime=0.8.2+nodecollab.3`.
++10. The commit message has the line `runtime=<version>` with a pinned runtime.
 +11. Expiry checks use the task's heartbeat as it was before this push: the
 +    `old` OID of its deletion line in this push, otherwise the current
 +    heartbeat ref. Completion, release and failure of a published task require
@@ -337,18 +442,24 @@ index 0000000000000000000000000000000000000000..8132f883745a85e5ad03c0066fb9decd
 +   `TASK_RENEWED` events. In this phase an older agent that tries to reclaim
 +   a heartbeat-extended claim has its whole push refused; its other writes
 +   still work.
-+2. Upgrade the center publisher and every agent to 0.8.2+nodecollab.3.
++2. Upgrade the center publisher and every agent to 0.8.2+nodecollab.3 or
++   later; nodecollab.3 and .5 can be mixed.
 +3. Switch: also enforce rules 10, 12 and 14, which refuses every write of an
 +   older runtime.
 +
 +With all agents stopped, the three steps can be done at once. Rolling back
 +after step 3 means re-allowing older writers, which then do not see
 +heartbeat-only renewals.
++
++Moving agents from nodecollab.3 to nodecollab.5, before or after step 3,
++needs no server change when rules 3 and 10 accept every nodecollab.N with
++N ≥ 3. Agents can be moved one at a time; a .3 agent and a .5 agent honour
++each other's heartbeats and contend on the same refs.
 diff --git a/docs/git-storage.md b/docs/git-storage.md
-index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af97efe064f 100644
+index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c995323f820821 100644
 --- a/docs/git-storage.md
 +++ b/docs/git-storage.md
-@@ -16,27 +16,167 @@ is used, exclude these prefixes from CI branch triggers:
+@@ -16,27 +16,216 @@ is used, exclude these prefixes from CI branch triggers:
  
  ```text
  cascade-state/<namespace>
@@ -375,8 +486,19 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 -- A lost renewal aborts publication. A process killed before the state push
 -  publishes nothing; a process killed after ref acceptance leaves a complete
 -  recoverable snapshot. Stale transaction locks expire and remain fenced.
-+This section describes 0.8.2+nodecollab.3. nodecollab.2 was an internal
-+step and is not released; its read path is part of this version.
++This section describes 0.8.2+nodecollab.5, a client upgrade on top of
++nodecollab.3. It writes the refs, commits and payloads of nodecollab.3, with
++`runtime=0.8.2+nodecollab.5` as the only difference, and makes the same
++remote calls per operation; it differs in local work, in construction and in
++redo timing (see the changelog). nodecollab.2 was an internal step and is not
++released; nodecollab.4 is reserved.
++
++Construction:
++
++- `GitStorage(...)` runs no Git command, makes no remote call and reads no
++  state. `lock()` and `read_snapshot()` synchronize first. `state_oid` is
++  `None` until one of them or `renewal_view()` ran. `exists()`, `load()` and
++  the components outside those see the local cache as last synchronized.
 +
 +Writes are optimistic:
 +
@@ -386,12 +508,22 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 +  commit plus the heartbeat refs of claims it created or ended.
 +- If another writer published first, nothing of this transaction lands and
 +  `StateConflictError` (a `LockContentionError`) is raised. `CascadeClient`
-+  then redoes the whole operation on the latest state: it waits a random time
-+  below a ceiling that doubles from 50 ms to 400 ms, for up to 60 seconds.
-+  The low cap keeps a writer that keeps losing from falling behind newcomers. Each
-+  attempt recomputes timestamps, fencing tokens, reservation expiry and the
-+  op_id receipt check; cancel notifications fire only after the commit lands.
-+  Out of time, the client returns `STATE_CONFLICT` with nothing published.
++  then redoes the whole operation on the latest state, for up to 60 seconds.
++  Before each redo it waits a random time below a ceiling that doubles from
++  50 ms to 400 ms over the attempts and also shrinks with the time the write
++  has already waited (`0.4 s * exp(-waited / 1.5 s)`, at least 10 ms). Under a
++  burst, writers that have waited longest therefore fetch first after each
++  published commit, while newcomers back off further. In a simulation of the
++  compare-and-swap race (2 to 20 writers, 0.1 to 0.6 s per attempt) this cut
++  p99 write latency by about 20% against nodecollab.3's backoff, raised the
++  median by about 10%, and raised attempts per second, each a fetch and a
++  push, by about 20%. Each attempt
++  recomputes timestamps, fencing tokens, reservation expiry and the op_id
++  receipt check; cancel notifications fire only after the commit lands. Out
++  of time, the client returns `STATE_CONFLICT` with nothing published.
++- A redo moves the working copy from the lost commit to the winner's with
++  one two-tree `read-tree`, rewriting only the files that differ; the event
++  log's chain head is continued from the bytes already read.
 +- After a failed or unknown push (including a timeout) the refs are read back.
 +  A state commit counts as published only when it is observed, directly or as
 +  an ancestor of the current state. An unchanged state with unchanged
@@ -409,8 +541,12 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 +  referenced, leaving a heartbeat ref pointing at a missing commit and
 +  failing every later fetch. Run maintenance only while writers are paused and
 +  check the repository with `git fsck` afterwards. Hosted services that run
-+  their own maintenance safely are not affected. Cascade's local caches run
-+  auto-maintenance in the foreground for the same reason.
++  their own maintenance safely are not affected. Cascade's local caches never
++  run maintenance in the background for the same reason. Their fetches skip
++  automatic maintenance, which would otherwise run between reading the state
++  and pushing on it; after a successful publish, when the cache holds about
++  6700 loose objects or 50 packs, `git maintenance run --auto` runs in the
++  foreground under the cache lock.
 +- Compaction is a compare-and-swap too: the archive ref and the new root are
 +  pushed atomically against the archived state, and a concurrent write makes it
 +  retry.
@@ -422,9 +558,12 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 +  that ref only, with the previous heartbeat as parent and expected OID. It
 +  writes no state and no event, so different tasks' renewals never conflict,
 +  and one push can renew several claims at once.
-+- A renewal is validated against the locally cached state and heartbeat. If
-+  either is outdated the push is refused and the renewal is redone on freshly
-+  fetched data; a claim that ended meanwhile is reported as before
++- A renewal is validated against the locally cached state and heartbeat,
++  read from the cached commit objects with `for-each-ref` and `cat-file`; it
++  does not fetch or touch the working copy. With a warm cache a renewal in a
++  new process runs five Git commands, one of them a remote call (the push).
++  If the cached copy is outdated the push is refused and the renewal is
++  redone on freshly fetched data; a claim that ended meanwhile is reported as before
 +  (`STALE_TOKEN`, `TASK_NOT_ACTIVE`). A heartbeat push that failed without
 +  landing (transport or server error, refs read back unchanged) is repeated
 +  the same way; after four attempts the last error is reported.
@@ -492,23 +631,32 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 +  only the files that changed. Any process about to change the working copy
 +  first announces it in `<cache>/git-state.generation`, and a file-stat
 +  fingerprint catches other edits, so a modified copy is always rebuilt from
-+  the cached commit.
++  the cached commit. `<cache>/git-state.clean` records the commit, generation
++  and fingerprint of a clean copy, so the next process trusts it without
++  rehashing the files.
++- `<cache>/git-state.events-head` records the byte length, SHA-256 and last
++  hash of the event log as last read. A later append parses only the lines
++  after a prefix with that digest; any other log is parsed in full.
 +
 +Remote Git calls per operation with a warm local cache, measured by
 +`tests/integration/test_git_storage_compat.py` against the unchanged wheels
 +(each call is one SSH login on an SSH remote):
 +
-+| Operation | nodecollab.1 | nodecollab.2 | nodecollab.3 |
-+|-----------|-------------:|-------------:|-------------:|
-+| Read, state unchanged | 5 | 1 | 1 (`fetch`) |
-+| Read, state changed | 5 | 2 | 1 (`fetch`) |
-+| Write, state unchanged | 6 | 3 | 2 (`fetch`, `push`) |
-+| Write, state changed | 6 | 4 | 2 (`fetch`, `push`) |
-+| Renewal | 6 | 3 | 1 (`push`) |
-+| Renewal in a new process | 6 | 3 | 1 (`push`) |
-+| Write while another process is in a transaction for 3 s | 18 | 8 | 2 |
++| Operation | nodecollab.1 | nodecollab.2 | nodecollab.3 | nodecollab.5 |
++|-----------|-------------:|-------------:|-------------:|-------------:|
++| Read, state unchanged | 5 | 1 | 1 | 1 (`fetch`) |
++| Read, state changed | 5 | 2 | 1 | 1 (`fetch`) |
++| Write, state unchanged | 6 | 3 | 2 | 2 (`fetch`, `push`) |
++| Write, state changed | 6 | 4 | 2 | 2 (`fetch`, `push`) |
++| Renewal | 6 | 3 | 1 | 1 (`push`) |
++| Renewal in a new process | 6 | 3 | 1 | 1 (`push`) |
++| Renewal in a new process, with construction | 8 | 4 | 2 | 1 (`push`) |
++| Write in a new process, with construction | 8 | 4 | 3 | 2 (`fetch`, `push`) |
++| Write while another process is in a transaction for 3 s | 18–48 | 8–10 | 2 | 2 |
 +
-+Constructing `GitStorage` also synchronizes once (one `fetch`).
++Through nodecollab.3, constructing `GitStorage` also synchronizes once (one
++`fetch`); from nodecollab.5 it makes no call. The rows "with construction"
++count both, for a process that constructs the storage and runs one operation.
 +
 +Throughput limit: every write still appends to one hash-chained event log on
 +one state ref, so writes are serialized at about one commit per
@@ -520,9 +668,21 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 +[Git heartbeat refs](git-heartbeat-refs.md)):
 +
 +1. Install a heartbeat-aware receive hook that still accepts older runtimes.
-+2. Upgrade the center publisher and every agent to 0.8.2+nodecollab.3.
-+3. Switch the hook to refuse state commits without
-+   `runtime=0.8.2+nodecollab.3`, lock-ref pushes and `TASK_RENEWED` events.
++2. Upgrade the center publisher and every agent to nodecollab.3 or later.
++3. Switch the hook to refuse state commits without a `runtime=` marker of
++   nodecollab.3 or later, lock-ref pushes and `TASK_RENEWED` events.
++
++From a center that already runs nodecollab.3, moving agents to nodecollab.5
++needs no server change: agents can be upgraded one at a time and both
++runtimes share the center. A receive hook must accept runtime markers
++`0.8.2+nodecollab.N` with N ≥ 3 instead of one exact string; CascadeCenter-web's
++`scripts/cascade-node-receive.py` does. Tools that require the installed
++version to equal `0.8.2+nodecollab.3` exactly must also accept .5.
++`tests/integration/test_git_storage_nc3_interop.py` checks the formats against
++the nodecollab.3 wheel, mixed agents on one namespace, heartbeats renewed by
++one runtime and honoured by the other, and this runtime's claims, renewals
++and completions behind that guard running on nodecollab.3 with
++`--require-runtime`.
 +
 +Older runtimes compute expiry from `claimed_at` only and would reclaim claims
 +that heartbeats keep alive, so this runtime must not share a center with them
@@ -532,7 +692,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
  
  ## CLI
  
-@@ -59,9 +199,9 @@ Run compaction on an operational cadence based on transaction volume:
+@@ -59,9 +248,9 @@ Run compaction on an operational cadence based on transaction volume:
  cascade --git-remote <remote> --namespace <namespace> compact
  ```
  
@@ -545,7 +705,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
  fetches one active commit. Archive deletion is an operator retention decision;
  do not delete an archive until its audit/backup retention period has elapsed.
  
-@@ -69,12 +209,13 @@ do not delete an archive until its audit/backup retention period has elapsed.
+@@ -69,12 +258,13 @@ do not delete an archive until its audit/backup retention period has elapsed.
  
  Treat every non-zero command as a coordination failure. Do not rerun a mutation
  blindly: first read the state ref or repeat the idempotent query. Cascade itself
@@ -563,7 +723,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
  CODING HTTPS are covered by the hosted acceptance test:
  
  ```bash
-@@ -98,7 +239,8 @@ and the old `slug@agent` convention are rejected before token-file access.
+@@ -98,7 +288,8 @@ and the old `slug@agent` convention are rejected before token-file access.
  Every complete/fail/release operation requires a fencing token, including the
  public `tools.execute_tool` registry; pass `agent_id`, `token` and optional
  `op_id`. Python `check`, `history`, `show`, `diff` and `snapshot_at` synchronize
@@ -573,13 +733,16 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
  
  Corruption is an error. Reads and mutations do not replay over a damaged graph,
  create an empty graph, rename evidence, or report successful recovery. A missing
-@@ -194,14 +336,22 @@ Before releasing a change to the Git backend, run:
+@@ -194,14 +385,28 @@ Before releasing a change to the Git backend, run:
  
  ```bash
  uv run pytest -q
 +CASCADE_LEGACY_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl \
 +CASCADE_NODECOLLAB2_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.2-py3-none-any.whl \
-+  uv run pytest -q tests/integration/test_git_storage_compat.py
++CASCADE_NODECOLLAB3_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl \
++CASCADE_CENTER_GUARD=/path/to/CascadeCenter-web/scripts/cascade-node-receive.py \
++  uv run pytest -q tests/integration/test_git_storage_compat.py \
++  tests/integration/test_git_storage_nc3_interop.py
  bash tests/e2e/git-storage-e2e.sh
  uv run python tests/acceptance/git_storage_contention_soak.py \
    --attempts 1000 --workers 8
@@ -589,9 +752,12 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
 -The integration suite includes real process-group kills before and after the
 -state push, lease renewal loss, skew injection, shallow-fetch bounds, and
 -compaction recovery. The container suite proves isolated-cache lifecycle and
-+The compatibility tests skip without the wheel variables; a release that
-+changes the Git protocol or its call budget must run them with the previously
-+deployed wheels.
++The compatibility tests skip without the first two wheel variables; the
++nodecollab.3 column of the call comparison is added when the third is set.
++The interop tests skip without the nodecollab.3 wheel, and their guard cases
++without `CASCADE_CENTER_GUARD`. A release that changes the Git protocol or its
++call budget must run them with the previously deployed wheels and the
++center's current guard.
 +
 +The integration suite includes real process kills inside a transaction and
 +during the push, lost compare-and-swaps, heartbeat races, shallow-fetch bounds,
@@ -600,19 +766,19 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..945d710018f8b86aed68e3155ce32af9
  errors. Finite `LockContentionError` results are explicit backpressure and are
  reported separately; they are never converted to success or mislabelled as
 diff --git a/pyproject.toml b/pyproject.toml
-index 7cd2eddc6a85b1b20802d84cb1326f1bd8b207f6..173c14b887163189c04ed17424b6a2a87b1300f9 100644
+index 7cd2eddc6a85b1b20802d84cb1326f1bd8b207f6..cb004111632a441ec77b105e1c4b1cf1b4119ec8 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
  [project]
  name = "cascade-auto"
 -version = "0.8.2+nodecollab.1"
-+version = "0.8.2+nodecollab.3"
++version = "0.8.2+nodecollab.5"
  description = "An agent factory with dynamic DAG scheduling for multi-agent task coordination"
  readme = "README.md"
  license = "Apache-2.0"
 diff --git a/src/cascade/__init__.py b/src/cascade/__init__.py
-index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..6936db63bca050081be531d3a2f3f10cf9c9467e 100644
+index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..208b29b708ce661c2330326e4dc4c8bf7be92ea8 100644
 --- a/src/cascade/__init__.py
 +++ b/src/cascade/__init__.py
 @@ -14,7 +14,7 @@
@@ -620,7 +786,7 @@ index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..6936db63bca050081be531d3a2f3f10c
  """Cascade - A DAG-based multi-agent task scheduling framework."""
  
 -__version__ = "0.8.2+nodecollab.1"
-+__version__ = "0.8.2+nodecollab.3"
++__version__ = "0.8.2+nodecollab.5"
  
  from cascade.client import CascadeClient
  from cascade.context.cancellation import CancellationToken
@@ -641,10 +807,10 @@ index 51a8cc7a4cdd49702c14e462690e7ced673d15eb..7f30aa348ccc79aa399b8a2dfac8bf93
          return {
              "success": True,
 diff --git a/src/cascade/client/base.py b/src/cascade/client/base.py
-index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99b9a89230 100644
+index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..7ca0b33e0fe194e18fa92822e7a58503aa7276a9 100644
 --- a/src/cascade/client/base.py
 +++ b/src/cascade/client/base.py
-@@ -18,33 +18,69 @@ from __future__ import annotations
+@@ -18,33 +18,80 @@ from __future__ import annotations
  
  import copy
  import math
@@ -675,15 +841,26 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
  
 +# A write that loses its compare-and-swap is redone on fresh state. Waits
 +# between attempts are drawn uniformly below a ceiling that doubles from 50 ms
-+# to 400 ms; redoing stops at the deadline or after WRITE_ATTEMPTS attempts,
-+# and the write then fails with STATE_CONFLICT having published nothing.
-+# The cap stays near one write's duration: a loser never delays the winner,
-+# and a long-waiting writer must not fall far behind newcomers that start at
-+# 50 ms, or it starves under a burst.
-+WRITE_ATTEMPTS = 1000
++# to 400 ms; redoing stops at the deadline, and the write then fails with
++# STATE_CONFLICT having published nothing. The ceiling also shrinks with the
++# time the write has already waited (halving about every second, down to
++# 10 ms), so under a burst the writers that have waited longest fetch first
++# after each published commit and win more often than newcomers, which still
++# back off up to 400 ms. WRITE_ATTEMPTS only guards against a storage that
++# fails instantly; fast attempts at the 10 ms floor reach the deadline first.
++WRITE_ATTEMPTS = 100_000
 +WRITE_DEADLINE_SECONDS = 60.0
 +_WRITE_BACKOFF_INITIAL = 0.05
 +_WRITE_BACKOFF_MAX = 0.4
++_WRITE_BACKOFF_FLOOR = 0.01
++_WRITE_AGING_SECONDS = 1.5
++
++
++def _redo_ceiling(attempt: int, waited: float) -> float:
++    """Upper bound of the wait before redo ``attempt`` (1-based) after ``waited`` seconds."""
++    grown = _WRITE_BACKOFF_INITIAL * 2.0 ** min(attempt - 1, 16)
++    aged = _WRITE_BACKOFF_MAX * math.exp(-waited / _WRITE_AGING_SECONDS)
++    return max(_WRITE_BACKOFF_FLOOR, min(_WRITE_BACKOFF_MAX, grown, aged))
 +
 +
 +def _active_claims(graph: Cascade) -> dict[str, tuple[str, int]]:
@@ -700,11 +877,11 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
  class _Tx:
 -    """Mutation transaction — holds graph, handles emit/save/op_id."""
 +    """Mutation transaction — holds graph, handles emit/save/op_id.
- 
--    def __init__(self, graph: Cascade, storage: StorageProtocol, op_id: str | None):
++
 +    ``heartbeats`` are the claim heartbeats read with this attempt's state.
 +    """
-+
+ 
+-    def __init__(self, graph: Cascade, storage: StorageProtocol, op_id: str | None):
 +    def __init__(
 +        self,
 +        graph: Cascade,
@@ -719,7 +896,7 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
          self._dirty = False
          self._trace_id = uuid.uuid4().hex
          self._task_inputs = {
-@@ -83,6 +119,11 @@ class _Tx:
+@@ -83,6 +130,11 @@ class _Tx:
          self._validate_task_inputs()
          self._storage.save(self.graph)
  
@@ -731,7 +908,7 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
      def ok(self, result: Result) -> Result:
          """Finalize a successful mutation: save graph, record op, return result."""
          if self._dirty:
-@@ -111,7 +152,7 @@ class ClientBase:
+@@ -111,7 +163,7 @@ class ClientBase:
          return None
  
      def _load_graph(self) -> Cascade:
@@ -740,7 +917,7 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
          graph = self._storage.load()
          if graph is None and self._storage.events.count:
              raise StorageCorruptionError(
-@@ -121,15 +162,62 @@ class ClientBase:
+@@ -121,15 +173,62 @@ class ClientBase:
  
      def load(self) -> Cascade:
          """Load the current graph. Corrupt state raises without modifying evidence."""
@@ -763,14 +940,14 @@ index e6812b38a4388cfce79c12e2c719a0b75acbd9a8..6a5ed649d5e05440d94b87101a3c2b99
 +        lookups are recomputed on each run. Claims the body creates or ends
 +        are staged as heartbeat changes of the same commit.
 +        """
-+        deadline = time.monotonic() + WRITE_DEADLINE_SECONDS
++        started = time.monotonic()
++        deadline = started + WRITE_DEADLINE_SECONDS
 +        conflict: StateConflictError | None = None
 +        for attempt in range(WRITE_ATTEMPTS):
 +            if attempt:
-+                exponent = min(attempt - 1, 16)
-+                ceiling = min(_WRITE_BACKOFF_MAX, _WRITE_BACKOFF_INITIAL * 2**exponent)
-+                delay = random.uniform(0, ceiling)
-+                if time.monotonic() + delay > deadline:
++                now = time.monotonic()
++                delay = random.uniform(0, _redo_ceiling(attempt, now - started))
++                if now + delay > deadline:
 +                    break
 +                time.sleep(delay)
 +            try:
@@ -1766,10 +1943,128 @@ index fce97e58637608e0a77a764268074989b43cd4d9..80590065a3e497cc81742371bd9d716a
      """Raised when an operation is cancelled."""
  
 diff --git a/src/cascade/events.py b/src/cascade/events.py
-index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..61d3728e6c3a612e1b8a0b52ff3f7ddbb5428b5a 100644
+index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba10a22ea4 100644
 --- a/src/cascade/events.py
 +++ b/src/cascade/events.py
-@@ -216,6 +216,10 @@ class FileEventStore:
+@@ -24,7 +24,9 @@ object per line). It provides:
+ """
+ 
+ import hashlib
++import io
+ import json
++import os
+ import time
+ import uuid
+ from dataclasses import dataclass, field
+@@ -150,20 +152,68 @@ class FileEventStore:
+     are provided by EventStoreQueries and delegate to read_all().
+     """
+ 
+-    def __init__(self, base_dir: Path | str):
++    def __init__(self, base_dir: Path | str, *, head_file: Path | str | None = None):
+         self._path = Path(base_dir) / "events.jsonl"
+-        self._last_hash: str = self._recover_last_hash()
++        # (byte length, SHA-256, last hash) of the log as last read, kept only
++        # when it ended at a line boundary. A later read that starts with the
++        # same bytes parses just the lines appended since. ``head_file``
++        # (outside the log's directory) keeps it for the next process.
++        self._head: tuple[int, str, str] | None = None
++        self._head_file = Path(head_file) if head_file is not None else None
++
++    def _load_head(self) -> tuple[int, str, str] | None:
++        if self._head_file is None:
++            return None
++        try:
++            record = json.loads(self._head_file.read_text(encoding="utf-8"))
++            length, digest, head_hash = record["length"], record["sha256"], record["hash"]
++        except (OSError, ValueError, KeyError, TypeError):
++            return None
++        if type(length) is not int or not isinstance(digest, str) or not isinstance(head_hash, str):
++            return None
++        return length, digest, head_hash
++
++    def _keep_head(self, head: tuple[int, str, str] | None) -> None:
++        self._head = head
++        if self._head_file is None or head is None:
++            return
++        length, digest, head_hash = head
++        tmp = self._head_file.with_name(f"{self._head_file.name}.{uuid.uuid4().hex}.tmp")
++        tmp.write_text(
++            json.dumps({"length": length, "sha256": digest, "hash": head_hash}), encoding="utf-8"
++        )
++        os.replace(tmp, self._head_file)
+ 
+-    def _recover_last_hash(self) -> str:
++    def _read_head(self) -> tuple[bytes, str]:
++        """The stored log and its chain head, read from the file every time.
++
++        Only lines after the bytes already read are parsed, with the same
++        newline handling and errors as reading the whole file in text mode.
++        """
+         if not self._path.exists():
+-            return ""
+-        last_hash = ""
+-        with open(self._path, encoding="utf-8") as f:
+-            for line in f:
+-                line = line.strip()
+-                if line:
+-                    last_hash = json.loads(line).get("hash", "")
+-        return last_hash
++            self._head = None
++            return b"", ""
++        raw = self._path.read_bytes()
++        if self._head is None:
++            self._head = self._load_head()
++        start, last_hash = 0, ""
++        if self._head is not None:
++            length, digest, head_hash = self._head
++            if len(raw) >= length and hashlib.sha256(raw[:length]).hexdigest() == digest:
++                start, last_hash = length, head_hash
++        for line in io.StringIO(raw[start:].decode("utf-8"), newline=None):
++            line = line.strip()
++            if line:
++                last_hash = json.loads(line).get("hash", "")
++        head = (len(raw), hashlib.sha256(raw).hexdigest(), last_hash)
++        if not raw.endswith(b"\n"):
++            self._head = None
++        elif head != self._head:
++            self._keep_head(head)
++        return raw, last_hash
++
++    def _recover_last_hash(self) -> str:
++        return self._read_head()[1]
+ 
+     def append(self, event: Event) -> None:
+         self._path.parent.mkdir(parents=True, exist_ok=True)
+@@ -184,7 +234,10 @@ class FileEventStore:
+         }
+         if trace_id:
+             content["trace_id"] = trace_id
+-        event_hash = _compute_hash(content, self._last_hash)
++        # Chain to the head actually on disk, not a cached copy: another
++        # process or a refreshed Git cache may have appended in between.
++        raw, prev_hash = self._read_head()
++        event_hash = _compute_hash(content, prev_hash)
+         event = Event(
+             type=event_type,
+             timestamp=timestamp,
+@@ -192,11 +245,13 @@ class FileEventStore:
+             logical_ts=logical_ts,
+             data=data,
+             trace_id=trace_id,
+-            prev_hash=self._last_hash,
++            prev_hash=prev_hash,
+             hash=event_hash,
+         )
+         self.append(event)
+-        self._last_hash = event_hash
++        if self._head is not None:
++            written = raw + (json.dumps(event.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
++            self._keep_head((len(written), hashlib.sha256(written).hexdigest(), event_hash))
+         return event
+ 
+     def read_all(self) -> list[Event]:
+@@ -216,10 +271,14 @@ class FileEventStore:
                      ) from exc
          return events
  
@@ -1780,7 +2075,12 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..61d3728e6c3a612e1b8a0b52ff3f7ddb
      def clear(self) -> None:
          if self._path.exists():
              self._path.unlink()
-@@ -229,34 +233,8 @@ class FileEventStore:
+-        self._last_hash = ""
++        self._head = None
+ 
+     @property
+     def count(self) -> int:
+@@ -229,34 +288,8 @@ class FileEventStore:
              return sum(1 for line in f if line.strip())
  
      def verify_chain(self) -> tuple[bool, str]:
@@ -1817,7 +2117,7 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..61d3728e6c3a612e1b8a0b52ff3f7ddb
  
      def read_since(self, since: float) -> list[Event]:
          return [e for e in self.read_all() if e.timestamp > since]
-@@ -297,6 +275,45 @@ class FileEventStore:
+@@ -297,6 +330,45 @@ class FileEventStore:
          return counts
  
  
@@ -1927,7 +2227,7 @@ index c4581f425bc111f59d8b44a6c9d18d7984b316c7..fdacc35f587c38b48f963f05d9d37069
      if replayed.epoch != snapshot.epoch:
          diffs.append(f"epoch {replayed.epoch} (replay) vs {snapshot.epoch} (snapshot)")
 diff --git a/src/cascade/storage/file_storage.py b/src/cascade/storage/file_storage.py
-index d9159bfb8607a018d9dabbcbc3bfc95e07b65516..7b14205cf07ec7b85d14b32f26cf0573a275d47d 100644
+index d9159bfb8607a018d9dabbcbc3bfc95e07b65516..a53f7532ead8793cb3ab011965de925e5ccc1cee 100644
 --- a/src/cascade/storage/file_storage.py
 +++ b/src/cascade/storage/file_storage.py
 @@ -18,7 +18,7 @@ import json
@@ -1966,19 +2266,37 @@ index d9159bfb8607a018d9dabbcbc3bfc95e07b65516..7b14205cf07ec7b85d14b32f26cf0573
      ):
          if base_dir is not None:
              self.base_dir = Path(base_dir)
-@@ -70,9 +78,10 @@ class FileStorage:
+@@ -68,11 +76,27 @@ class FileStorage:
+ 
+         self._file_lock = FileLock(self.base_dir / ".lock")
          self._thread_lock = threading.Lock()
-         self._lamport: int = self._recover_lamport()
+-        self._lamport: int = self._recover_lamport()
++        # ``None`` after ``refresh()``: read from graph.json again on next use.
++        self._clock: int | None = self._recover_lamport()
          self.events: EventStoreProtocol = FileEventStore(self.base_dir)
 -        self.tokens: TokenStoreProtocol = FileTokenStore(self.base_dir)
 +        self.tokens: TokenStoreProtocol = FileTokenStore(self.base_dir, dispatch=token_dispatch)
          self.ops: OpLogProtocol = FileOpLog(self.base_dir)
          self.content = content or LocalContentStore(self.base_dir)
 +        self.heartbeats: HeartbeatStoreProtocol = FileHeartbeatStore(self.base_dir)
++
++    @property
++    def _lamport(self) -> int:
++        if self._clock is None:
++            self._clock = self._recover_lamport()
++        return self._clock
++
++    @_lamport.setter
++    def _lamport(self, value: int) -> None:
++        self._clock = value
++
++    def refresh(self) -> None:
++        """Forget values read from files another writer may have replaced."""
++        self._clock = None
  
      def _recover_lamport(self) -> int:
          """Read lamport/HLC from graph.json at startup."""
-@@ -141,6 +150,28 @@ class FileStorage:
+@@ -141,6 +165,28 @@ class FileStorage:
          finally:
              self._thread_lock.release()
  
@@ -2008,7 +2326,7 @@ index d9159bfb8607a018d9dabbcbc3bfc95e07b65516..7b14205cf07ec7b85d14b32f26cf0573
      # Save
      # ------------------------------------------------------------------
 diff --git a/src/cascade/storage/git_ref_lease.py b/src/cascade/storage/git_ref_lease.py
-index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120c844d8c2 100644
+index f5d97f6340ff96649d4faae3e7d3a3410624f2de..eeb775ba5dcff996142586398d32b0c312182c4d 100644
 --- a/src/cascade/storage/git_ref_lease.py
 +++ b/src/cascade/storage/git_ref_lease.py
 @@ -26,6 +26,7 @@ from __future__ import annotations
@@ -2019,7 +2337,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
  import re
  import socket
  import subprocess
-@@ -41,12 +42,25 @@ from cascade.errors import LockContentionError, LockError
+@@ -41,35 +42,42 @@ from cascade.errors import LockContentionError, LockError
  _SAFE_NAMESPACE = re.compile(r"^[A-Za-z0-9._-]+$")
  _URI_USERINFO = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
  
@@ -2035,28 +2353,56 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
      return _URI_USERINFO.sub(r"\1<redacted>@", value)
  
  
+-def _validate_namespace(namespace: str) -> None:
+-    """Validate every Git ref shape before the namespace reaches a cache path."""
+-    if not _SAFE_NAMESPACE.fullmatch(namespace) or namespace in {".", ".."}:
+-        raise ValueError("namespace is not a valid Git ref component")
+-    refs = (
+-        f"refs/heads/cascade-state/{namespace}",
+-        f"refs/heads/cascade-lock/{namespace}",
+-        f"refs/heads/cascade-archive/{namespace}/0123456789ab",
+-        f"refs/cascade-cache/state/{namespace}",
+-        f"refs/cascade-cache/lock/{namespace}",
 +def _push_accepted(result: subprocess.CompletedProcess[str]) -> bool:
 +    """A push succeeded only if Git exited zero and reported no rejected ref."""
 +    return result.returncode == 0 and not any(
 +        line.startswith("!") for line in result.stdout.splitlines()
-+    )
-+
-+
- def _validate_namespace(namespace: str) -> None:
-     """Validate every Git ref shape before the namespace reaches a cache path."""
-     if not _SAFE_NAMESPACE.fullmatch(namespace) or namespace in {".", ".."}:
-@@ -55,8 +69,10 @@ def _validate_namespace(namespace: str) -> None:
-         f"refs/heads/cascade-state/{namespace}",
-         f"refs/heads/cascade-lock/{namespace}",
-         f"refs/heads/cascade-archive/{namespace}/0123456789ab",
-+        f"refs/heads/cascade-heartbeat/{namespace}/{'0' * 64}",
-         f"refs/cascade-cache/state/{namespace}",
-         f"refs/cascade-cache/lock/{namespace}",
-+        f"refs/cascade-cache/heartbeat/{namespace}/{'0' * 64}",
      )
-     for ref in refs:
-         try:
-@@ -170,19 +186,27 @@ class GitRefLease:
+-    for ref in refs:
+-        try:
+-            result = subprocess.run(
+-                ["git", "check-ref-format", ref],
+-                capture_output=True,
+-                text=True,
+-                timeout=10,
+-            )
+-        except (OSError, subprocess.TimeoutExpired) as exc:
+-            raise LockError(f"Git namespace validation could not complete: {exc}") from exc
+-        if result.returncode != 0:
+-            raise ValueError(f"namespace is not valid for Cascade Git refs: {namespace!r}")
++
++
++def _validate_namespace(namespace: str) -> None:
++    """Refuse a namespace that would make any Cascade Git ref invalid.
++
++    The namespace is one ref component, last in the state ref and in the
++    middle of heartbeat and archive refs. For the allowed characters
++    ``git check-ref-format`` adds only these rules: no leading dot, no
++    ``..``, no trailing dot, no ``.lock`` suffix. Checking them here needs
++    no Git process; a test compares the result with Git.
++    """
++    if (
++        not _SAFE_NAMESPACE.fullmatch(namespace)
++        or namespace.startswith(".")
++        or namespace.endswith(".")
++        or ".." in namespace
++        or namespace.endswith(".lock")
++    ):
++        raise ValueError(f"namespace is not valid for Cascade Git refs: {namespace!r}")
+ 
+ 
+ class GitRefLease:
+@@ -170,19 +178,27 @@ class GitRefLease:
          return result
  
      def _remote_oid(self) -> str | None:
@@ -2094,7 +2440,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
          result = self._run("show", "-s", "--format=%B", self._cache_ref)
          try:
              payload = json.loads(result.stdout)
-@@ -212,24 +236,29 @@ class GitRefLease:
+@@ -212,24 +228,29 @@ class GitRefLease:
          return self._run(*args, input_text=payload).stdout.strip()
  
      def _push_cas(self, new_oid: str | None, expected_oid: str | None) -> bool:
@@ -2135,7 +2481,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
          raise LockError(f"Git lease compare-and-swap command failed: {detail}")
  
      def acquire(
-@@ -237,12 +266,30 @@ class GitRefLease:
+@@ -237,12 +258,30 @@ class GitRefLease:
          *,
          timeout: float = 10.0,
          blocking: bool = True,
@@ -2168,7 +2514,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
  
          while True:
              current = self._remote_oid()
-@@ -260,7 +307,7 @@ class GitRefLease:
+@@ -260,7 +299,7 @@ class GitRefLease:
                              raise LockContentionError(
                                  f"Could not acquire Git lease {self._lock_ref} before timeout"
                              )
@@ -2177,7 +2523,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
                          continue
                      raise
                  try:
-@@ -283,7 +330,7 @@ class GitRefLease:
+@@ -283,7 +322,7 @@ class GitRefLease:
                          raise LockContentionError(
                              f"Git lease {self._lock_ref} is held by {payload.get('holder', '<unknown>')}"
                          )
@@ -2186,7 +2532,7 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
                      continue
  
              candidate = self._new_commit(parent=current)
-@@ -293,7 +340,7 @@ class GitRefLease:
+@@ -293,7 +332,7 @@ class GitRefLease:
  
              if not blocking or time.monotonic() >= deadline:
                  raise LockContentionError(f"Could not acquire Git lease {self._lock_ref}")
@@ -2196,10 +2542,10 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..ed3c2a7b7de3c4392688a39ffd14e120
      def renew(self) -> str:
          """Extend this holder's lease using CAS, refusing stale holders."""
 diff --git a/src/cascade/storage/git_storage.py b/src/cascade/storage/git_storage.py
-index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9b2a2edfb 100644
+index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a4d4c7a89 100644
 --- a/src/cascade/storage/git_storage.py
 +++ b/src/cascade/storage/git_storage.py
-@@ -15,32 +15,116 @@
+@@ -15,32 +15,129 @@
  """Git-backed Cascade storage for service-free cross-machine coordination.
  
  Each transaction is materialized into a dedicated local cache, executed using
@@ -2243,6 +2589,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +    StateConflictError,
 +    StorageCorruptionError,
 +)
++from cascade.events import FileEventStore
 +from cascade.storage._serde import deserialize_graph
  from cascade.storage.content import ContentStore
  from cascade.storage.file_storage import FileStorage
@@ -2265,8 +2612,20 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +
 +RUNTIME = __version__
 +_HEARTBEAT_KEY = re.compile(r"[0-9a-f]{64}")
++# Git knows the empty tree of each object format without storing it.
++_EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
++_EMPTY_TREE_SHA256 = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
++_SHA256_FORMAT = re.compile(r"^\s*objectformat\s*=\s*sha256\s*$", re.IGNORECASE | re.MULTILINE)
 +# (ref, new OID or None to delete, expected OID or None for absent)
 +RefUpdate = tuple[str, str | None, str | None]
++# A fetch would otherwise start ``git maintenance run --auto`` before it
++# returns, inside the window between reading the state and pushing on it.
++# Maintenance runs after a successful publish instead (``_maintain``).
++_FETCH = ("-c", "maintenance.auto=false", "-c", "gc.auto=0", "fetch")
++# Git's default ``gc.auto`` of 6700 loose objects, sampled in one fan-out
++# directory as Git itself does, and a pack count worth consolidating.
++_LOOSE_SAMPLE_LIMIT = 27
++_PACK_LIMIT = 50
 +
 +
 +def _refused_as_stale(result: subprocess.CompletedProcess[str], refs: int) -> bool:
@@ -2324,7 +2683,20 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
  
  
  class GitStorage:
-@@ -56,8 +140,6 @@ class GitStorage:
+@@ -48,6 +145,12 @@ class GitStorage:
+ 
+     ``cache_dir`` must be local to one machine/container. Independent agents
+     use independent caches and coordinate only through the remote refs.
++
++    Construction makes no remote call and reads no state. :meth:`lock` and
++    :meth:`read_snapshot` synchronize first; :meth:`renewal_view` with
++    ``fresh=False`` serves the cached refs and fetches only when the cached
++    copy turns out to be outdated. Outside those, reads see the local cache
++    as last synchronized.
+     """
+ 
+     def __init__(
+@@ -56,8 +159,6 @@ class GitStorage:
          *,
          namespace: str = "default",
          cache_dir: Path | str | None = None,
@@ -2333,7 +2705,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
      ) -> None:
          if not remote:
              raise ValueError("remote is required")
-@@ -71,33 +153,69 @@ class GitStorage:
+@@ -71,33 +172,84 @@ class GitStorage:
          self.remote = remote
          self.namespace = namespace
          self.cache_dir = root
@@ -2342,6 +2714,8 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        # here; a separate working copy keeps either from reusing the other's.
 +        self._repo_dir = root / "git-state"
 +        self._generation_file = root / "git-state.generation"
++        self._clean_file = root / "git-state.clean"
++        self._events_head_file = root / "git-state.events-head"
          self._data_dir = self._repo_dir / "data"
          self._state_ref = f"refs/heads/cascade-state/{namespace}"
          self._cache_ref = f"refs/cascade-cache/state/{namespace}"
@@ -2382,13 +2756,31 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -        self._renew_interval = lease_seconds / 3
          self._ensure_repo()
 -        self._file = FileStorage(self._data_dir)
-+        self._file = self._new_file_storage()
-         self.events: EventStoreProtocol = self._file.events
-         self.tokens: TokenStoreProtocol = self._file.tokens
-         self.ops: OpLogProtocol = self._file.ops
-         self.content: ContentStore = self._file.content
+-        self.events: EventStoreProtocol = self._file.events
+-        self.tokens: TokenStoreProtocol = self._file.tokens
+-        self.ops: OpLogProtocol = self._file.ops
+-        self.content: ContentStore = self._file.content
+-        self._refresh_snapshot()
++        # Built on first use. It reads its files when asked, so one instance
++        # serves every commit the worktree is moved to (see ``refresh``).
++        self._file: FileStorage | None = None
 +        self.heartbeats: HeartbeatStoreProtocol = _GitHeartbeats(self)
-         self._refresh_snapshot()
++
++    @property
++    def events(self) -> EventStoreProtocol:
++        return self._files().events
++
++    @property
++    def tokens(self) -> TokenStoreProtocol:
++        return self._files().tokens
++
++    @property
++    def ops(self) -> OpLogProtocol:
++        return self._files().ops
++
++    @property
++    def content(self) -> ContentStore:
++        return self._files().content
  
      @property
      def state_ref(self) -> str:
@@ -2414,7 +2806,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
      def _run(
          self,
          *args: str,
-@@ -122,6 +240,7 @@ class GitStorage:
+@@ -122,6 +274,7 @@ class GitStorage:
                  input=input_text,
                  capture_output=True,
                  text=True,
@@ -2422,7 +2814,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
                  env=env,
                  timeout=60,
              )
-@@ -145,11 +264,87 @@ class GitStorage:
+@@ -145,11 +298,132 @@ class GitStorage:
          self._repo_dir.mkdir(parents=True, exist_ok=True)
          if not (self._repo_dir / ".git").exists():
              self._run("init", "--quiet", str(self._repo_dir), git_dir=False)
@@ -2441,11 +2833,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +            if name in refs:
 +                found[name] = oid.strip()
 +        return {ref: found.get(ref) for ref in refs}
- 
--    def _remote_state_oid(self) -> str | None:
--        result = self._run("ls-remote", self.remote, self._state_ref, git_dir=False)
--        line = result.stdout.strip()
--        return line.split()[0] if line else None
++
 +    def _remote_ref_oid(self, ref: str) -> str | None:
 +        return self._remote_refs(ref)[ref]
 +
@@ -2475,7 +2863,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        """Load the cached state OID and heartbeat refs with payloads in one call."""
 +        listed = self._run(
 +            "for-each-ref",
-+            "--format=%(refname)%00%(objectname)%00%(contents)%00",
++            "--format=%(refname)%00%(objectname)%00%(tree)%00%(contents)%00",
 +            self._cache_ref,
 +            self._heartbeat_cache_prefix,
 +        ).stdout
@@ -2487,9 +2875,12 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +            if not record.strip():
 +                continue
 +            name, _, rest = record.partition("\0")
-+            oid, _, message = rest.partition("\0")
++            oid, _, rest = rest.partition("\0")
++            tree, _, message = rest.partition("\0")
 +            if name == self._cache_ref:
 +                state = oid
++                if tree:
++                    self._trees[oid] = tree
 +                continue
 +            key = name[len(self._heartbeat_cache_prefix) :]
 +            if name.startswith(self._heartbeat_cache_prefix) and _HEARTBEAT_KEY.fullmatch(key):
@@ -2502,6 +2893,52 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        self._heartbeat_payloads = payloads
 +        self._heartbeat_errors = errors
 +
++    def _has_cached_state(self) -> bool:
++        """Whether the cache holds a state ref, read without starting Git.
++
++        Only decides between a shallow first fetch and an incremental one;
++        when the ref store is not plain files Git is asked.
++        """
++        git_dir = self._repo_dir / ".git"
++        if not (git_dir / "refs").is_dir() or (git_dir / "reftable").exists():
++            self._read_cache_refs()
++            return self._cached_state is not None
++        if (git_dir / self._cache_ref).is_file():
++            return True
++        try:
++            packed = (git_dir / "packed-refs").read_text(encoding="utf-8")
++        except FileNotFoundError:
++            return False
++        return any(line.endswith(f" {self._cache_ref}") for line in packed.splitlines())
++
++    def _maintain(self) -> None:
++        """Let Git compact this cache once enough objects piled up.
++
++        Runs under the cache lock after a publish, outside any transaction
++        window. A failure leaves the cache usable and is not reported.
++        """
++        objects = self._repo_dir / ".git" / "objects"
++        try:
++            loose = sum(1 for _ in os.scandir(objects / "17"))
++        except FileNotFoundError:
++            loose = 0
++        try:
++            packs = sum(1 for entry in os.scandir(objects / "pack") if entry.name.endswith(".pack"))
++        except FileNotFoundError:
++            packs = 0
++        if loose <= _LOOSE_SAMPLE_LIMIT and packs <= _PACK_LIMIT:
++            return
++        try:
++            done = self._run("maintenance", "run", "--auto", "--quiet", check=False)
++            if done.returncode != 0 and "not a git command" in done.stderr:
++                self._run("gc", "--auto", "--quiet", check=False)
++        except LockError:
++            pass
+ 
+-    def _remote_state_oid(self) -> str | None:
+-        result = self._run("ls-remote", self.remote, self._state_ref, git_dir=False)
+-        line = result.stdout.strip()
+-        return line.split()[0] if line else None
 +    def _update_local_refs(self, changes: Mapping[str, str | None]) -> None:
 +        """Set (OID) or delete (None) local refs in one update-ref call."""
 +        if not changes:
@@ -2514,21 +2951,24 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
  
      def _clear_worktree(self) -> None:
          for child in self._repo_dir.iterdir():
-@@ -160,211 +355,541 @@ class GitStorage:
+@@ -160,228 +434,605 @@ class GitStorage:
              else:
                  child.unlink()
  
-+    def _new_file_storage(self) -> FileStorage:
-+        return FileStorage(self._data_dir, token_dispatch=self._defer_notification)
++    def _files(self) -> FileStorage:
++        if self._file is None:
++            self._file = FileStorage(self._data_dir, token_dispatch=self._defer_notification)
++            # The chain head is kept beside, not inside, the published data.
++            self._file.events = FileEventStore(self._data_dir, head_file=self._events_head_file)
++        return self._file
 +
      def _bind_file_storage(self) -> None:
 -        self._file = FileStorage(self._data_dir)
-+        self._file = self._new_file_storage()
-         self.events = self._file.events
-         self.tokens = self._file.tokens
-         self.ops = self._file.ops
-         self.content = self._file.content
- 
+-        self.events = self._file.events
+-        self.tokens = self._file.tokens
+-        self.ops = self._file.ops
+-        self.content = self._file.content
+-
 -    def _sync_state(self) -> None:
 -        """Materialize one complete remote snapshot into the local cache."""
 -        for _ in range(3):
@@ -2539,6 +2979,9 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -                self._base_oid = None
 -                self._bind_file_storage()
 -                return
++        """Drop values the file layer read from the previous commit's files."""
++        self._files().refresh()
++
 +    def _defer_notification(self, notifier: CancelNotifier, token: TokenStatus) -> None:
 +        # A cancellation inside a transaction only fires once its commit lands;
 +        # a transaction that loses its CAS and is redone never notifies early.
@@ -2560,17 +3003,16 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        incremental and do not grow the shallow boundary. With
 +        ``materialize`` the worktree is made equal to the state commit.
 +        """
-+        if self._cached_state is None:
-+            self._read_cache_refs()
 +        options = ["--quiet", "--no-tags", "--prune"]
-+        if self._cached_state is None:
++        if self._cached_state is None and not self._has_cached_state():
 +            options.append("--depth=1")
 +        try:
              self._run(
-                 "fetch",
+-                "fetch",
 -                "--quiet",
 -                "--no-tags",
 -                "--depth=1",
++                *_FETCH,
 +                *options,
                  self.remote,
                  f"+{self._state_ref}:{self._cache_ref}",
@@ -2658,9 +3100,31 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +
 +    def _mark_clean(self, oid: str | None, generation: str) -> None:
 +        self._clean = (oid, generation, self._fingerprint())
++        # Recorded for the next process using this cache. It is trusted only
++        # while the generation token and every file's stat still match.
++        record = json.dumps({"oid": oid, "generation": generation, "files": self._clean[2]})
++        tmp = self._clean_file.with_name(f"{self._clean_file.name}.{uuid.uuid4().hex}.tmp")
++        tmp.write_text(record, encoding="utf-8")
++        os.replace(tmp, self._clean_file)
++
++    def _recorded_clean(self) -> tuple[str | None, str, str] | None:
++        try:
++            record = json.loads(self._clean_file.read_text(encoding="utf-8"))
++            oid, generation, files = record["oid"], record["generation"], record["files"]
++        except (OSError, ValueError, KeyError, TypeError):
++            return None
++        if not (oid is None or isinstance(oid, str)) or not isinstance(generation, str):
++            return None
++        return (oid, generation, files) if isinstance(files, str) else None
 +
 +    def _trusted_clean(self) -> tuple[bool, str | None]:
-+        """``(True, oid)`` when the worktree still equals the commit this process left."""
++        """``(True, oid)`` when the worktree still equals the commit last left in it.
++
++        The record comes from this process or, for a new process, from the
++        last one that used the cache.
++        """
++        if self._clean is None:
++            self._clean = self._recorded_clean()
 +        if self._clean is None:
 +            return False, None
 +        oid, generation, fingerprint = self._clean
@@ -2692,7 +3156,13 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -            return
 -        raise LockError("Git state changed repeatedly while refreshing the local snapshot")
 +            self._bound_oid = oid
-+
+ 
+-    def _refresh_snapshot(self) -> None:
+-        try:
+-            with self._cache_lock.acquire(timeout=10):
+-                self._sync_state()
+-        except Timeout as exc:
+-            raise LockContentionError("Could not acquire local Git storage cache lock") from exc
 +    def _fast_forward(self, current: str, oid: str) -> bool:
 +        """Move a worktree known to equal ``current`` to ``oid``, rewriting only changed files."""
 +        token = self._bump_generation()
@@ -2711,9 +3181,17 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        self._base_oid = None
 +        self._bind_file_storage()
 +        self._bound_oid = None
-+
+ 
+-    def _publish_state(self) -> None:
 +    def _worktree_tree(self) -> str:
-+        # Stage from the worktree root rather than naming ``data`` directly.
+         # Stage from the worktree root rather than naming ``data`` directly.
+-        # A read-only operation on a brand-new namespace may enter the storage
+-        # lock before FileStorage has created any data files. ``git add ...
+-        # data`` treats that absent pathspec as an error, whereas ``.`` is a
+-        # valid no-op and still stages a later deletion of the whole data tree.
+-        # ``--force`` prevents a user's global Git excludes (for example a
+-        # broad ``*.json`` rule) from silently dropping coordination files in
+-        # this isolated internal repository.
 +        # A read-only operation on a brand-new namespace may run before
 +        # FileStorage has created any data files. ``git add ... data`` treats
 +        # that absent pathspec as an error, whereas ``.`` is a valid no-op and
@@ -2721,7 +3199,8 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        # prevents a user's global Git excludes (for example a broad
 +        # ``*.json`` rule) from silently dropping coordination files in this
 +        # isolated internal repository.
-+        self._run("add", "--all", "--force", "--", ".")
+         self._run("add", "--all", "--force", "--", ".")
+-        tree = self._run("write-tree").stdout.strip()
 +        return self._run("write-tree").stdout.strip()
 +
 +    def _tree_of(self, commit: str) -> str:
@@ -2730,13 +3209,24 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        return self._trees[commit]
 +
 +    def _base_tree(self) -> str:
-+        if self._base_oid:
+         if self._base_oid:
+-            base_tree = self._run("rev-parse", f"{self._base_oid}^{{tree}}").stdout.strip()
+-        else:
+-            base_tree = self._run("mktree", input_text="").stdout.strip()
+-        if tree == base_tree:
+-            return
 +            return self._tree_of(self._base_oid)
 +        return self._empty_tree_oid()
 +
 +    def _empty_tree_oid(self) -> str:
 +        if self._empty_tree is None:
-+            self._empty_tree = self._run("mktree", input_text="").stdout.strip()
++            try:
++                config = (self._repo_dir / ".git" / "config").read_text(encoding="utf-8")
++            except OSError:
++                self._empty_tree = self._run("mktree", input_text="").stdout.strip()
++            else:
++                sha256 = _SHA256_FORMAT.search(config) is not None
++                self._empty_tree = _EMPTY_TREE_SHA256 if sha256 else _EMPTY_TREE_SHA1
 +        return self._empty_tree
 +
 +    def _worktree_matches(self, oid: str) -> bool:
@@ -2746,33 +3236,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        except LockError:
 +            # A damaged local index is rebuilt from the cached commit.
 +            return False
- 
-     def _refresh_snapshot(self) -> None:
-         try:
-             with self._cache_lock.acquire(timeout=10):
--                self._sync_state()
-+                self._sync()
-         except Timeout as exc:
-             raise LockContentionError("Could not acquire local Git storage cache lock") from exc
- 
--    def _publish_state(self) -> None:
--        # Stage from the worktree root rather than naming ``data`` directly.
--        # A read-only operation on a brand-new namespace may enter the storage
--        # lock before FileStorage has created any data files. ``git add ...
--        # data`` treats that absent pathspec as an error, whereas ``.`` is a
--        # valid no-op and still stages a later deletion of the whole data tree.
--        # ``--force`` prevents a user's global Git excludes (for example a
--        # broad ``*.json`` rule) from silently dropping coordination files in
--        # this isolated internal repository.
--        self._run("add", "--all", "--force", "--", ".")
--        tree = self._run("write-tree").stdout.strip()
--        if self._base_oid:
--            base_tree = self._run("rev-parse", f"{self._base_oid}^{{tree}}").stdout.strip()
--        else:
--            base_tree = self._run("mktree", input_text="").stdout.strip()
--        if tree == base_tree:
--            return
--
++
 +    # ------------------------------------------------------------------
 +    # Publication
 +    # ------------------------------------------------------------------
@@ -2782,7 +3246,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        lines.extend(details)
 +        lines.append(f"created_at={time.time()}")
 +        return "\n".join(lines) + "\n"
-+
+ 
 +    def _commit_state(self) -> str | None:
 +        """Commit the worktree on top of the base; ``None`` when nothing changed."""
 +        tree = self._worktree_tree()
@@ -2799,13 +3263,28 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -        commit = self._run(*args, input_text=message).stdout.strip()
 -        self._push_ref_cas(commit, self._state_ref, self._base_oid)
 -        self._base_oid = commit
--
++        message = self._state_message("cascade state")
++        return self._run(*args, input_text=message).stdout.strip()
+ 
 -    @contextmanager
 -    def _maintain_lease(self) -> Generator[Callable[[], None], None, None]:
 -        """Renew the remote lease until the transaction and state push finish."""
 -        stop = threading.Event()
 -        failures: list[Exception] = []
--
++    def _heartbeat_commit(self, heartbeat: Heartbeat, parent: str | None) -> str:
++        if heartbeat.namespace != self.namespace or heartbeat.runtime != RUNTIME:
++            raise ValueError("heartbeat namespace or runtime does not match this storage")
++        payload = json.dumps(heartbeat.to_payload(), sort_keys=True, separators=(",", ":"))
++        Heartbeat.from_payload(json.loads(payload))
++        if len(payload.encode("utf-8")) > HEARTBEAT_MAX_BYTES - 512:
++            raise ValueError("heartbeat payload exceeds the size limit")
++        args = ["commit-tree", self._empty_tree_oid()]
++        if parent is not None:
++            args.extend(["-p", parent])
++        commit = self._run(*args, input_text=payload).stdout.strip()
++        self._written[commit] = heartbeat
++        return commit
+ 
 -        def renew_loop() -> None:
 -            while not stop.wait(self._renew_interval):
 -                try:
@@ -2826,30 +3305,29 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -        )
 -        thread.start()
 -        primary: BaseException | None = None
-+        message = self._state_message("cascade state")
-+        return self._run(*args, input_text=message).stdout.strip()
-+
-+    def _heartbeat_commit(self, heartbeat: Heartbeat, parent: str | None) -> str:
-+        if heartbeat.namespace != self.namespace or heartbeat.runtime != RUNTIME:
-+            raise ValueError("heartbeat namespace or runtime does not match this storage")
-+        payload = json.dumps(heartbeat.to_payload(), sort_keys=True, separators=(",", ":"))
-+        Heartbeat.from_payload(json.loads(payload))
-+        if len(payload.encode("utf-8")) > HEARTBEAT_MAX_BYTES - 512:
-+            raise ValueError("heartbeat payload exceeds the size limit")
-+        args = ["commit-tree", self._empty_tree_oid()]
-+        if parent is not None:
-+            args.extend(["-p", parent])
-+        commit = self._run(*args, input_text=payload).stdout.strip()
-+        self._written[commit] = heartbeat
-+        return commit
-+
+-        try:
+-            yield check
+-        except BaseException as exc:
+-            primary = exc
+-            raise
+-        finally:
+-            stop.set()
+-            thread.join()
+-            if primary is None:
+-                check()
+-            elif failures:
+-                primary.add_note(f"Git lease renewal also failed: {failures[0]}")
 +    def _stage_heartbeats(
 +        self, started: Sequence[Heartbeat], active: Mapping[str, tuple[str, int]]
 +    ) -> None:
 +        if self._open != "write":
 +            raise LockError("Heartbeats are staged inside lock()")
 +        self._staged = (list(started), dict(active))
-+
+ 
+-    def _remote_ref_oid(self, ref: str) -> str | None:
+-        result = self._run("ls-remote", self.remote, ref, git_dir=False)
+-        line = result.stdout.strip()
+-        return line.split()[0] if line else None
 +    def _staged_heartbeat_updates(self) -> list[RefUpdate]:
 +        """Refs to change with the state commit: new claims' heartbeats and ended ones."""
 +        if self._staged is None:
@@ -2870,7 +3348,17 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +            (f"{self._heartbeat_prefix}{key}", new, expected)
 +            for key, (new, expected) in changes.items()
 +        ]
-+
+ 
+-    def _push_ref_cas(self, source_oid: str, ref: str, expected_oid: str | None) -> None:
+-        result = self._run(
+-            "push",
+-            "--porcelain",
+-            f"--force-with-lease={ref}:{expected_oid or ''}",
+-            self.remote,
+-            f"{source_oid}:{ref}",
+-            check=False,
+-        )
+-        if result.returncode != 0:
 +    def _push_refs(self, updates: Sequence[RefUpdate]) -> None:
 +        """Apply ``updates`` in one atomic expected-OID push.
 +
@@ -2886,34 +3374,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        for ref, new, expected in updates:
 +            options.append(f"--force-with-lease={ref}:{expected or ''}")
 +            refspecs.append(f"{new or ''}:{ref}")
-         try:
--            yield check
--        except BaseException as exc:
--            primary = exc
--            raise
--        finally:
--            stop.set()
--            thread.join()
--            if primary is None:
--                check()
--            elif failures:
--                primary.add_note(f"Git lease renewal also failed: {failures[0]}")
--
--    def _remote_ref_oid(self, ref: str) -> str | None:
--        result = self._run("ls-remote", self.remote, ref, git_dir=False)
--        line = result.stdout.strip()
--        return line.split()[0] if line else None
--
--    def _push_ref_cas(self, source_oid: str, ref: str, expected_oid: str | None) -> None:
--        result = self._run(
--            "push",
--            "--porcelain",
--            f"--force-with-lease={ref}:{expected_oid or ''}",
--            self.remote,
--            f"{source_oid}:{ref}",
--            check=False,
--        )
--        if result.returncode != 0:
++        try:
 +            result = self._run("push", *options, self.remote, *refspecs, check=False)
 +            if _push_accepted(result):
 +                return
@@ -2956,14 +3417,36 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        if all(observed[ref] == old for ref, _, old in updates):
 +            raise LockError(f"Git heartbeat compare-and-swap command failed: {detail}")
 +        raise StateConflictError(f"A heartbeat changed before this renewal: {detail}")
-+
+ 
+-    def _compact_state(self) -> str:
+-        """Archive the current tip and replace state history with one root snapshot."""
+-        old_oid = self._base_oid
+-        if old_oid is None:
+-            raise LockError("Cannot compact an unwritten Git namespace")
+-        archive_ref = f"refs/heads/cascade-archive/{self.namespace}/{old_oid[:12]}"
+-        archived_oid = self._remote_ref_oid(archive_ref)
+-        if archived_oid is None:
+-            self._push_ref_cas(old_oid, archive_ref, None)
+-        elif archived_oid != old_oid:
+-            raise LockError(f"Git archive ref {archive_ref} points to an unexpected commit")
+-
+-        tree = self._run("write-tree").stdout.strip()
+-        message = (
+-            f"cascade compacted state {self.namespace}\n\n"
+-            f"archived_from={old_oid}\n"
+-            f"created_at={time.time()}\n"
+-        )
+-        compacted_oid = self._run("commit-tree", tree, input_text=message).stdout.strip()
+-        self._push_ref_cas(compacted_oid, self._state_ref, old_oid)
+-        self._base_oid = compacted_oid
+-        return archive_ref
 +    def _landed_under(self, tip: str | None, commit: str) -> bool:
 +        """Whether ``commit`` is in the remote state history ending at ``tip``."""
 +        if tip is None:
 +            return False
 +        try:
 +            self._run(
-+                "fetch",
++                *_FETCH,
 +                "--quiet",
 +                "--no-tags",
 +                self.remote,
@@ -2975,7 +3458,13 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        if result.returncode not in (0, 1):
 +            raise LockError("Git state publication outcome is unknown: ancestry check failed")
 +        return result.returncode == 0
-+
+ 
+-    def compact(self) -> str:
+-        """Archive current history and publish an equivalent root snapshot."""
+-        archive_ref = ""
+-        with self.lock():
+-            archive_ref = self._compact_state()
+-        return archive_ref
 +    def _record_published(self, commit: str | None, updates: Sequence[RefUpdate]) -> None:
 +        changes: dict[str, str | None] = {}
 +        if commit is not None:
@@ -3009,36 +3498,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        if updates:
 +            self._push_refs(updates)
 +            self._record_published(None, updates)
- 
--    def _compact_state(self) -> str:
--        """Archive the current tip and replace state history with one root snapshot."""
--        old_oid = self._base_oid
--        if old_oid is None:
--            raise LockError("Cannot compact an unwritten Git namespace")
--        archive_ref = f"refs/heads/cascade-archive/{self.namespace}/{old_oid[:12]}"
--        archived_oid = self._remote_ref_oid(archive_ref)
--        if archived_oid is None:
--            self._push_ref_cas(old_oid, archive_ref, None)
--        elif archived_oid != old_oid:
--            raise LockError(f"Git archive ref {archive_ref} points to an unexpected commit")
--
--        tree = self._run("write-tree").stdout.strip()
--        message = (
--            f"cascade compacted state {self.namespace}\n\n"
--            f"archived_from={old_oid}\n"
--            f"created_at={time.time()}\n"
--        )
--        compacted_oid = self._run("commit-tree", tree, input_text=message).stdout.strip()
--        self._push_ref_cas(compacted_oid, self._state_ref, old_oid)
--        self._base_oid = compacted_oid
--        return archive_ref
--
--    def compact(self) -> str:
--        """Archive current history and publish an equivalent root snapshot."""
--        archive_ref = ""
--        with self.lock():
--            archive_ref = self._compact_state()
--        return archive_ref
++
 +    # ------------------------------------------------------------------
 +    # Transactions and views
 +    # ------------------------------------------------------------------
@@ -3076,22 +3536,28 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 -                except BaseException as exc:
 -                    primary = exc
 -                    raise
-+                    yield
-+                    commit = self._commit_state()
-+                    if commit is not None:
-+                        updates: list[RefUpdate] = [(self._state_ref, commit, self._base_oid)]
-+                        updates.extend(self._staged_heartbeat_updates())
-+                        self._push_refs(updates)
-+                        self._record_published(commit, updates)
-+                    notifications = self._notifications
-                 finally:
+-                finally:
 -                    try:
 -                        released = self._lease.release()
 -                    except Exception as exc:
 -                        if primary is not None:
 -                            primary.add_note(f"Git transaction lease release also failed: {exc}")
 -                        else:
--                            raise
++                    yield
++                    commit = self._commit_state()
++                    if commit is not None:
++                        updates: list[RefUpdate] = [(self._state_ref, commit, self._base_oid)]
++                        updates.extend(self._staged_heartbeat_updates())
++                        try:
++                            self._push_refs(updates)
++                        except StateConflictError:
++                            # Worktree and index hold exactly ``commit``; the redo
++                            # moves them to the winner's commit file by file.
++                            self._mark_clean(commit, generation)
+                             raise
++                        self._record_published(commit, updates)
++                    notifications = self._notifications
++                finally:
 +                    self._open = None
 +                    self._staged = None
 +                    self._notifications = []
@@ -3099,6 +3565,8 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +                # The worktree now equals the published (or unchanged) base.
 +                self._mark_clean(self._base_oid, generation)
 +                self._bound_oid = self._base_oid
++                if commit is not None:
++                    self._maintain()
 +                for notifier, token in notifications:
 +                    notifier.notify(token)
 +        except Timeout as exc:
@@ -3169,7 +3637,10 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +                    yield
 +                finally:
 +                    self._open = None
-+                if self._worktree_tree() != self._base_tree():
++                trusted, known = self._trusted_clean()
++                if not (trusted and known == self._base_oid) and (
++                    self._worktree_tree() != self._base_tree()
++                ):
 +                    self._bump_generation()
 +                    self._clean = None
 +                    raise LockError("Git read-only snapshot was modified; nothing was published")
@@ -3217,16 +3688,23 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +        raise AssertionError("unreachable")
 +
      def exists(self) -> bool:
-         return self._file.exists()
+-        return self._file.exists()
++        return self._files().exists()
  
-@@ -375,8 +900,24 @@ class GitStorage:
-         self._file.observe(remote_ts)
+     def next_lamport(self) -> int:
+-        return self._file.next_lamport()
++        return self._files().next_lamport()
+ 
+     def observe(self, remote_ts: int) -> None:
+-        self._file.observe(remote_ts)
++        self._files().observe(remote_ts)
  
      def load(self) -> Cascade | None:
+-        return self._file.load()
 +        if self._open == "renewal":
 +            return self._load_cached_commit()
-         return self._file.load()
- 
++        return self._files().load()
++
 +    def _load_cached_commit(self) -> Cascade | None:
 +        """Claims and states of the cached commit; artifact texts are not loaded."""
 +        if self._cached_state is None:
@@ -3240,10 +3718,18 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..39c77bbb73ed3a699f3ca74c692ef5b9
 +                f"invalid graph structure: {exc}", path=f"{self._cached_state}:data/graph.json"
 +            ) from exc
 +        return graph
-+
-     def save(self, cascade: Cascade) -> None:
-         self._file.save(cascade)
  
+     def save(self, cascade: Cascade) -> None:
+-        self._file.save(cascade)
++        self._files().save(cascade)
+ 
+     def backup_corrupt(self) -> str | None:
+-        return self._file.backup_corrupt()
++        return self._files().backup_corrupt()
+ 
+     def delete(self) -> None:
+-        self._file.delete()
++        self._files().delete()
 diff --git a/src/cascade/storage/heartbeat_store.py b/src/cascade/storage/heartbeat_store.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..36c8b7cb53de0027a0c0caa27a62c5655e6e2da7
@@ -3393,7 +3879,7 @@ index 0000000000000000000000000000000000000000..36c8b7cb53de0027a0c0caa27a62c565
 +        for heartbeat in beats:
 +            self._write(heartbeat)
 diff --git a/src/cascade/storage/protocol.py b/src/cascade/storage/protocol.py
-index c6e448d0582cb2a238b9cfffcbf670723c50feb3..2058317d5d7cd17f7477a0aeeb516553adb2be55 100644
+index c6e448d0582cb2a238b9cfffcbf670723c50feb3..407e7b58faec88c34752ba36223f1007d9401267 100644
 --- a/src/cascade/storage/protocol.py
 +++ b/src/cascade/storage/protocol.py
 @@ -19,7 +19,7 @@ FileStorage provides file-based implementations; distributed backends
@@ -3480,15 +3966,33 @@ index c6e448d0582cb2a238b9cfffcbf670723c50feb3..2058317d5d7cd17f7477a0aeeb516553
  @runtime_checkable
  class OpLogProtocol(Protocol):
      """Idempotent operation log."""
-@@ -174,6 +226,7 @@ class StorageProtocol(Protocol):
-     tokens: TokenStoreProtocol
-     ops: OpLogProtocol
-     content: ContentStore
-+    heartbeats: HeartbeatStoreProtocol
+@@ -170,10 +222,21 @@ class StorageProtocol(Protocol):
+     same protocol.
+     """
+ 
+-    events: EventStoreProtocol
+-    tokens: TokenStoreProtocol
+-    ops: OpLogProtocol
+-    content: ContentStore
++    # Read-only: a backend may build these on first use.
++    @property
++    def events(self) -> EventStoreProtocol: ...
++
++    @property
++    def tokens(self) -> TokenStoreProtocol: ...
++
++    @property
++    def ops(self) -> OpLogProtocol: ...
++
++    @property
++    def content(self) -> ContentStore: ...
++
++    @property
++    def heartbeats(self) -> HeartbeatStoreProtocol: ...
  
      def exists(self) -> bool: ...
  
-@@ -184,6 +237,31 @@ class StorageProtocol(Protocol):
+@@ -184,6 +247,31 @@ class StorageProtocol(Protocol):
      @contextmanager
      def lock(self, timeout: float = 10.0, blocking: bool = True) -> Generator[None, None, None]: ...
  
@@ -4488,10 +4992,10 @@ index db0493c3b3874fa041f2e2ba9dd74f3f5c145497..b101bab34f34ee552f19361e6b245156
              if archive_ref is not None:
 diff --git a/tests/git_remote_kit.py b/tests/git_remote_kit.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9afe6eb19d
+index 0000000000000000000000000000000000000000..2d0877b7d23c0d6a6dd185d64ad5d5c54e8abd78
 --- /dev/null
 +++ b/tests/git_remote_kit.py
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,367 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -4521,6 +5025,7 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +import shutil
 +import subprocess
 +import sys
++import zipfile
 +from collections import Counter
 +from pathlib import Path
 +from typing import Any
@@ -4627,6 +5132,8 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +
 +spec = json.loads(sys.argv[1])
 +contention = tuple(spec["contention"])
++# For example the writer identity a receive hook reads (CASCADE_WRITER_AGENT).
++os.environ.update(spec.get("env", {}))
 +
 +
 +def storage_for(cache):
@@ -4649,6 +5156,9 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +            time.sleep(0.1)
 +
 +
++if spec.get("construction_log"):
++    # Count what constructing the storage costs, together with the first op.
++    os.environ["CASCADE_GIT_LOG"] = spec["construction_log"]
 +storage = first_storage()
 +client = CascadeClient(storage)
 +out = {"version": cascade.__version__, "file": cascade.__file__, "results": []}
@@ -4710,7 +5220,10 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +        elif kind == "claim":
 +            started = time.monotonic()
 +            result, attempts = until_uncontended(
-+                lambda: client.claim(op["agent"], op.get("task_id"), timeout=op.get("timeout"))
++                lambda: client.claim(
++                    op["agent"], op.get("task_id"), agent_tier=op.get("agent_tier"),
++                    timeout=op.get("timeout"),
++                )
 +            )
 +            seconds = time.monotonic() - started
 +            if result.success:
@@ -4736,7 +5249,7 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +                     "message": result.message, "seconds": time.monotonic() - started}
 +                )
 +        elif kind == "complete":
-+            task_id, token = held.pop(op["agent"])
++            task_id, token = held.pop(op["agent"], None) or (op["task_id"], op["token"])
 +            started = time.monotonic()
 +            result, attempts = until_uncontended(
 +                lambda: client.complete(
@@ -4754,6 +5267,18 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +            out["results"].append(
 +                {"op": kind, "success": result.success, "message": result.message,
 +                 "released": released}
++            )
++        elif kind == "audit":
++            from cascade.replay import verify
++
++            with storage.read_snapshot():
++                graph = storage.load()
++                chain = storage.events.verify_chain()
++                diffs = verify(storage.events.read_all(), graph, storage.content)
++            out["results"].append(
++                {"op": kind, "success": bool(chain[0]) and not diffs, "chain": list(chain),
++                 "diffs": [str(diff) for diff in diffs],
++                 "states": {key: node.state.name for key, node in graph.nodes.items()}}
 +            )
 +        elif kind == "sleep":
 +            time.sleep(op["seconds"])
@@ -4787,6 +5312,15 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +
 +print(json.dumps(out))
 +"""
++
++
++def extract_runtime(wheel: str | Path, version: str, target: Path) -> Path:
++    """Unpack a pure-Python wheel for use as an agent's PYTHONPATH; check its version."""
++    with zipfile.ZipFile(wheel) as archive:
++        archive.extractall(target)
++    metadata = next(target.glob("cascade_auto-*.dist-info/METADATA")).read_text(encoding="utf-8")
++    assert f"\nVersion: {version}\n" in metadata, f"{wheel} is not {version}"
++    return target
 +
 +
 +def agent_env(runtime: Path, path_prefix: Path | None = None) -> dict[str, str]:
@@ -4830,7 +5364,7 @@ index 0000000000000000000000000000000000000000..f40d62751ee77b62df4c28390b9a6a9a
 +) -> dict[str, Any]:
 +    return finish_agent(start_agent(runtime, spec, path_prefix=path_prefix))
 diff --git a/tests/integration/test_git_storage.py b/tests/integration/test_git_storage.py
-index acffbfd877ff746662a2205561c15013b1220505..0d1a9a9c7bb1faa896f4cf9279c000bace40bd45 100644
+index acffbfd877ff746662a2205561c15013b1220505..c7dc0154457c1a1570d299f519991e2e9fcaeeee 100644
 --- a/tests/integration/test_git_storage.py
 +++ b/tests/integration/test_git_storage.py
 @@ -15,10 +15,11 @@
@@ -4992,7 +5526,15 @@ index acffbfd877ff746662a2205561c15013b1220505..0d1a9a9c7bb1faa896f4cf9279c000ba
  
  
  def test_compaction_archives_old_tip_and_restarts_one_commit_history(tmp_path: Path) -> None:
-@@ -333,7 +309,7 @@ def test_fresh_cache_fetches_only_the_latest_state_snapshot(tmp_path: Path) -> N
+@@ -328,12 +304,14 @@ def test_fresh_cache_fetches_only_the_latest_state_snapshot(tmp_path: Path) -> N
+     for index in range(10):
+         assert writer.add(f"node-{index}").success
+ 
+-    GitStorage(str(remote), namespace="e2e", cache_dir=tmp_path / "fresh")
++    fresh = GitStorage(str(remote), namespace="e2e", cache_dir=tmp_path / "fresh")
++    with fresh.read_snapshot():
++        pass
+     count = subprocess.run(
          [
              "git",
              "-C",
@@ -5003,10 +5545,10 @@ index acffbfd877ff746662a2205561c15013b1220505..0d1a9a9c7bb1faa896f4cf9279c000ba
              "refs/cascade-cache/state/e2e",
 diff --git a/tests/integration/test_git_storage_compat.py b/tests/integration/test_git_storage_compat.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9627504ec
+index 0000000000000000000000000000000000000000..9f8602f34977da8a0c1b956c4d49a52fc8ba255d
 --- /dev/null
 +++ b/tests/integration/test_git_storage_compat.py
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,388 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -5071,7 +5613,9 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +LOCK_REF = f"refs/heads/cascade-lock/{NAMESPACE}"
 +# Remote calls per operation for this runtime with a warm local cache: every
 +# sync is one fetch (it transfers nothing when no ref moved), every write one
-+# atomic push, and a renewal is one heartbeat push.
++# atomic push, and a renewal is one heartbeat push. The ``with_construction``
++# rows also count constructing GitStorage in that process, which syncs
++# nothing from 0.8.2+nodecollab.5 on.
 +BUDGET = {
 +    "read": {"fetch": 1},
 +    "read_after_foreign_write": {"fetch": 1},
@@ -5079,6 +5623,8 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +    "write_after_foreign_write": {"fetch": 1, "push": 1},
 +    "renew": {"push": 1},
 +    "renew_in_new_process": {"push": 1},
++    "renew_in_new_process_with_construction": {"push": 1},
++    "write_in_new_process_with_construction": {"fetch": 1, "push": 1},
 +    "write_while_another_process_holds_a_transaction_3s": {"fetch": 1, "push": 1},
 +}
 +
@@ -5105,6 +5651,15 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +    if not wheel:
 +        pytest.skip("set CASCADE_NODECOLLAB2_WHEEL to the 0.8.2+nodecollab.2 wheel")
 +    return _extract(wheel, "0.8.2+nodecollab.2", tmp_path_factory.mktemp("nodecollab-2"))
++
++
++@pytest.fixture(scope="module")
++def nodecollab3_runtime(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
++    """The 0.8.2+nodecollab.3 wheel when ``CASCADE_NODECOLLAB3_WHEEL`` names it."""
++    wheel = os.environ.get("CASCADE_NODECOLLAB3_WHEEL")
++    if not wheel:
++        return None
++    return _extract(wheel, "0.8.2+nodecollab.3", tmp_path_factory.mktemp("nodecollab-3"))
 +
 +
 +def _spec(remote: Path, cache: Path, ops: list[dict[str, Any]]) -> dict[str, Any]:
@@ -5134,10 +5689,15 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +    ops: list[dict[str, Any]] = []
 +    if scenario.endswith("_after_foreign_write"):
 +        ops.append({"op": "foreign_add", "cache": str(root / "foreign"), "id": f"{scenario}-f"})
++    spec_extra: dict[str, Any] = {}
++    if scenario.endswith("_with_construction"):
++        spec_extra["construction_log"] = str(log)
++        # Warm the cache in an earlier process.
++        run_agent(runtime, _spec(remote, root / "cache", [{"op": "nodes"}]))
 +    if scenario == "renew":
 +        ops.append({"op": "claim", "agent": "agent-a", "task_id": "alpha", "timeout": 60})
 +        ops.append({"op": "renew", "agent": "agent-a", "log": str(log)})
-+    elif scenario == "renew_in_new_process":
++    elif scenario.startswith("renew_in_new_process"):
 +        claim = run_agent(
 +            runtime,
 +            _spec(
@@ -5158,7 +5718,8 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +    else:
 +        kind = "nodes" if scenario.startswith("read") else "add"
 +        ops.append({"op": kind, "id": f"{scenario}-node", "log": str(log)})
-+    result = run_agent(runtime, _spec(remote, root / "cache", ops), path_prefix=bin_dir)
++    spec = {**_spec(remote, root / "cache", ops), **spec_extra}
++    result = run_agent(runtime, spec, path_prefix=bin_dir)
 +    assert all(item["success"] for item in result["results"]), result
 +    return remote_calls(log)
 +
@@ -5216,15 +5777,19 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +def test_remote_calls_drop_against_older_runtimes(
 +    legacy_runtime: Path,
 +    nodecollab2_runtime: Path,
++    nodecollab3_runtime: Path | None,
 +    tmp_path: Path,
 +    capsys: pytest.CaptureFixture[str],
 +) -> None:
 +    bin_dir = install_git_counter(tmp_path / "bin")
++    current = "nodecollab." + cascade.__version__.rsplit(".", 1)[1]
 +    columns = {
 +        "nodecollab.1": _measure_all(legacy_runtime, tmp_path / "nc1", bin_dir),
 +        "nodecollab.2": _measure_all(nodecollab2_runtime, tmp_path / "nc2", bin_dir),
-+        "nodecollab.3": _measure_all(SRC, tmp_path / "nc3", bin_dir),
 +    }
++    if nodecollab3_runtime is not None:
++        columns["nodecollab.3"] = _measure_all(nodecollab3_runtime, tmp_path / "nc3", bin_dir)
++    columns[current] = _measure_all(SRC, tmp_path / "current", bin_dir)
 +    table = {
 +        scenario: {
 +            label: {"calls": dict(counts[scenario]), "total": counts[scenario].total()}
@@ -5236,13 +5801,17 @@ index 0000000000000000000000000000000000000000..48be8f5db5bacba730d61f48bec817e9
 +    if report:
 +        Path(report).write_text(json.dumps(table, indent=2, sort_keys=True), encoding="utf-8")
 +    with capsys.disabled():
-+        print("\nremote git calls per operation (nodecollab.1 / .2 / .3):")
++        print(f"\nremote git calls per operation ({' / '.join(columns)}):")
 +        for scenario, row in table.items():
 +            totals = " / ".join(str(row[label]["total"]) for label in columns)
 +            print(f"  {scenario}: {totals}")
 +    for scenario, row in table.items():
-+        assert row["nodecollab.3"]["total"] < row["nodecollab.1"]["total"], scenario
-+        assert row["nodecollab.3"]["total"] <= row["nodecollab.2"]["total"], scenario
++        assert row[current]["total"] < row["nodecollab.1"]["total"], scenario
++        assert row[current]["total"] <= row["nodecollab.2"]["total"], scenario
++        if "nodecollab.3" in row:
++            assert row[current]["total"] <= row["nodecollab.3"]["total"], scenario
++            if scenario.endswith("_with_construction"):
++                assert row[current]["total"] < row["nodecollab.3"]["total"], scenario
 +
 +
 +def test_legacy_agent_runs_the_unchanged_runtime(legacy_runtime: Path, tmp_path: Path) -> None:
@@ -5433,10 +6002,10 @@ index ecfb305e971b19d97c6aacf508328edb79991fe1..29872f65805dd6a12168aba57a837fc1
      assert [(node.id, node.state) for node in nodes] == [("after", "READY")]
 diff --git a/tests/integration/test_git_storage_heartbeats.py b/tests/integration/test_git_storage_heartbeats.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197c21a43da
+index 0000000000000000000000000000000000000000..119d3284315c3d6ea556ae8e8820b2ed863f2fbc
 --- /dev/null
 +++ b/tests/integration/test_git_storage_heartbeats.py
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,684 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -5460,7 +6029,7 @@ index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197
 +on fresh state; a client that dies mid-write leaves nothing for others to wait on.
 +Goal: renewals and writes that do not serialize on a global lock and never
 +reclaim a live claim.
-+Migration: integration evidence for 0.8.2+nodecollab.3.
++Migration: integration evidence for 0.8.2+nodecollab.3 and later.
 +"""
 +
 +from __future__ import annotations
@@ -5557,7 +6126,7 @@ index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197
 +        "claim_token": token,
 +        "renewed_at": first["renewed_at"],
 +        "timeout": 60.0,
-+        "runtime": "0.8.2+nodecollab.3",
++        "runtime": "0.8.2+nodecollab.5",
 +    }
 +    assert first["renewed_at"] == worker.load().nodes["task"].claimed_at
 +    state = remote_refs(remote)[STATE_REF]
@@ -5586,6 +6155,36 @@ index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197
 +    assert node["renewed_at"] == renewed.data["renewed_at"]
 +    assert node["lease_expires_at"] == renewed.data["renewed_at"] + 60
 +    assert observer.check("task").data["lease_expires_at"] == node["lease_expires_at"]
++
++
++def test_renewal_in_a_new_process_reads_only_cached_refs_and_pushes_once(
++    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    assert _client(remote, tmp_path / "publisher").add("task").success
++    claim = _client(remote, tmp_path / "worker").claim("agent-a", "task", timeout=60)
++    worktree = tmp_path / "worker" / "git-state" / "data" / "graph.json"
++    before = worktree.stat().st_mtime_ns
++    log = tmp_path / "git.log"
++    monkeypatch.setenv("PATH", f"{install_git_counter(tmp_path / 'bin')}:{os.environ['PATH']}")
++    monkeypatch.setenv("CASCADE_GIT_LOG", str(log))
++
++    renewed = _client(remote, tmp_path / "worker").renew(
++        "task", agent_id="agent-a", token=claim.data["token"]
++    )
++
++    monkeypatch.delenv("CASCADE_GIT_LOG")
++    assert renewed.success, renewed.message
++    calls = []
++    for line in log.read_text(encoding="utf-8").splitlines():
++        args = [arg for arg in line.split("\x1f") if arg]
++        while args and args[0] in ("-C", "-c"):
++            args = args[2:]
++        calls.append(args[0])
++    # No fetch, no worktree access: the cached refs and graph object, one
++    # heartbeat commit, one push and the local ref update.
++    assert calls == ["for-each-ref", "cat-file", "commit-tree", "push", "update-ref"]
++    assert worktree.stat().st_mtime_ns == before
++    assert _payload(remote, "task")["renewed_at"] == renewed.data["renewed_at"]
 +
 +
 +def test_every_expiry_check_counts_the_current_heartbeat(remote: Path, tmp_path: Path) -> None:
@@ -5994,7 +6593,7 @@ index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197
 +        "claim_token": 3,
 +        "renewed_at": 1.5,
 +        "timeout": None,
-+        "runtime": "0.8.2+nodecollab.3",
++        "runtime": "0.8.2+nodecollab.5",
 +    }
 +    assert Heartbeat.from_payload(good).timeout is None
 +    for change in (
@@ -6091,12 +6690,521 @@ index 0000000000000000000000000000000000000000..22207df800b8eb3a09f024f98a6fa197
 +        ErrorCode.TASK_NOT_ACTIVE,
 +        ErrorCode.STALE_TOKEN,
 +    )
+diff --git a/tests/integration/test_git_storage_nc3_interop.py b/tests/integration/test_git_storage_nc3_interop.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9799de5b7
+--- /dev/null
++++ b/tests/integration/test_git_storage_nc3_interop.py
+@@ -0,0 +1,503 @@
++# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""This runtime beside the released 0.8.2+nodecollab.3, and behind a center guard.
++
++Perspective: a center whose guard and publisher run nodecollab.3 while agents
++move to this runtime one by one.
++Invariant: both runtimes write the same heartbeat and state formats (only the
++runtime marker differs), honour each other's heartbeats, contend on the same
++refs without losing writes, and pass the center's receive guard.
++Goal: prove the client upgrade needs no server change.
++Migration: needs ``CASCADE_NODECOLLAB3_WHEEL``; the guard cases also need
++``CASCADE_CENTER_GUARD``, the path of CascadeCenter-web's
++``scripts/cascade-node-receive.py``, which runs here on the nodecollab.3 wheel.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import subprocess
++import sys
++import time
++from pathlib import Path
++from typing import Any
++
++import pytest
++from git_remote_kit import (
++    SRC,
++    extract_runtime,
++    finish_agent,
++    git_blob,
++    make_remote,
++    remote_refs,
++    run_agent,
++    start_agent,
++)
++
++import cascade
++from cascade.client import CascadeClient
++from cascade.storage.git_storage import GitStorage
++from cascade.types import heartbeat_key
++
++NC3 = "0.8.2+nodecollab.3"
++NAMESPACE = "interop"
++STATE_REF = f"refs/heads/cascade-state/{NAMESPACE}"
++HEARTBEAT_PREFIX = f"refs/heads/cascade-heartbeat/{NAMESPACE}/"
++CENTER = "center-1"
++TIER = "pro"
++EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
++
++
++@pytest.fixture(scope="module")
++def nc3_runtime(tmp_path_factory: pytest.TempPathFactory) -> Path:
++    wheel = os.environ.get("CASCADE_NODECOLLAB3_WHEEL")
++    if not wheel:
++        pytest.skip(f"set CASCADE_NODECOLLAB3_WHEEL to the {NC3} wheel")
++    return extract_runtime(wheel, NC3, tmp_path_factory.mktemp("nodecollab-3"))
++
++
++@pytest.fixture(scope="module")
++def center_guard() -> Path:
++    guard = os.environ.get("CASCADE_CENTER_GUARD")
++    if not guard:
++        pytest.skip("set CASCADE_CENTER_GUARD to CascadeCenter-web's cascade-node-receive.py")
++    return Path(guard)
++
++
++def _spec(
++    remote: Path, cache: Path, ops: list[dict[str, Any]], writer: str | None = None
++) -> dict[str, Any]:
++    spec: dict[str, Any] = {
++        "remote": str(remote),
++        "namespace": NAMESPACE,
++        "cache": str(cache),
++        "ops": ops,
++    }
++    if writer is not None:
++        spec["env"] = {"CASCADE_WRITER_AGENT": writer}
++    return spec
++
++
++def _client(remote: Path, cache: Path) -> CascadeClient:
++    return CascadeClient(GitStorage(str(remote), namespace=NAMESPACE, cache_dir=cache))
++
++
++def _seed(remote: Path, cache: Path, *task_ids: str) -> None:
++    # Before any guard: the guard refuses to create the center state.
++    client = _client(remote, cache)
++    for task_id in task_ids:
++        assert client.add(task_id).success
++
++
++def _install_guard(remote: Path, guard: Path, runtime: Path, root: Path, agents: list[str]) -> Path:
++    """The center's receive guard as pre-receive hook, on the nodecollab.3 runtime.
++
++    It runs switched (``--require-runtime``), the strictest mode, with
++    incremental verification from checkpoints. Returns the checkpoint directory.
++    """
++    registry = root / "registry.json"
++    registry.write_text(
++        json.dumps([{"id": agent, "tier": TIER, "centers": [CENTER]} for agent in agents]),
++        encoding="utf-8",
++    )
++    checkpoints = root / "checkpoints"
++    checkpoints.mkdir(mode=0o700)
++    hook = remote / "hooks" / "pre-receive"
++    hook.write_text(
++        "#!/bin/sh\n"
++        f"PYTHONPATH='{runtime}' exec '{sys.executable}' '{guard}' --registry '{registry}' "
++        f"--center {CENTER} --namespace {NAMESPACE} --checkpoint-dir '{checkpoints}' "
++        "--require-runtime\n",
++        encoding="utf-8",
++    )
++    hook.chmod(0o755)
++    return checkpoints
++
++
++def _heartbeat_refs(remote: Path) -> list[str]:
++    return [ref for ref in remote_refs(remote) if ref.startswith(HEARTBEAT_PREFIX)]
++
++
++def _runtime_markers(remote: Path) -> set[str]:
++    log = subprocess.run(
++        ["git", "--git-dir", str(remote), "log", "--format=%B", STATE_REF],
++        check=True,
++        capture_output=True,
++        text=True,
++    ).stdout
++    return {line[len("runtime=") :] for line in log.splitlines() if line.startswith("runtime=")}
++
++
++def _audit(runtime: Path, remote: Path, cache: Path) -> dict[str, Any]:
++    """Chain and replay verification from inside an agent of ``runtime``."""
++    result = run_agent(runtime, _spec(remote, cache, [{"op": "audit"}]))["results"][0]
++    assert result["success"], result
++    states: dict[str, Any] = result["states"]
++    return states
++
++
++def _cat(remote: Path, oid: str) -> str:
++    return subprocess.run(
++        ["git", "--git-dir", str(remote), "cat-file", "-p", oid],
++        check=True,
++        capture_output=True,
++        text=True,
++    ).stdout
++
++
++def _shape(value: Any) -> Any:
++    """The JSON structure of ``value`` with leaves replaced by their type."""
++    if isinstance(value, dict):
++        return {key: _shape(item) for key, item in sorted(value.items())}
++    if isinstance(value, list):
++        return [_shape(item) for item in value]
++    return type(value).__name__
++
++
++def _artifacts(remote: Path, runtime: Path, root: Path) -> dict[str, Any]:
++    """Objects one claim, renewal and completion of ``runtime`` leave on a fresh remote."""
++    _seed(remote, root / "seed", "task")
++    claimed = run_agent(
++        runtime,
++        _spec(
++            remote,
++            root / "agent",
++            [
++                {"op": "claim", "agent": "agent-a", "task_id": "task", "timeout": 60},
++                {"op": "renew", "agent": "agent-a"},
++            ],
++        ),
++    )
++    claim, renewal = claimed["results"]
++    assert claim["success"] and renewal["success"], claimed
++    refs = remote_refs(remote)
++    heartbeat = next(oid for ref, oid in refs.items() if ref.startswith(HEARTBEAT_PREFIX))
++    claim_state = refs[STATE_REF]
++    done = run_agent(
++        runtime,
++        _spec(
++            remote,
++            root / "agent",
++            [{"op": "complete", "agent": "agent-a", "task_id": "task", "token": claim["token"]}],
++        ),
++    )
++    assert done["results"][0]["success"], done
++    state = remote_refs(remote)[STATE_REF]
++    tree = subprocess.run(
++        ["git", "--git-dir", str(remote), "ls-tree", "-r", "--name-only", state],
++        check=True,
++        capture_output=True,
++        text=True,
++    ).stdout.split()
++    events = [
++        json.loads(line) for line in git_blob(remote, state, "data/events.jsonl").splitlines()
++    ]
++    return {
++        "version": claimed["version"],
++        "heartbeat": _cat(remote, heartbeat),
++        "claim_commit": _cat(remote, claim_state),
++        "state_commit": _cat(remote, state),
++        "tree": sorted(tree),
++        "graph": json.loads(git_blob(remote, state, "data/graph.json")),
++        "events": events,
++        "ops": json.loads(git_blob(remote, state, "data/ops.json")),
++        "heartbeats_left": _heartbeat_refs(remote),
++    }
++
++
++def _headers(commit: str) -> tuple[list[str], str]:
++    header, _, message = commit.partition("\n\n")
++    return [line.split(" ", 1)[0] for line in header.splitlines()], message
++
++
++def test_heartbeat_and_state_formats_match_nodecollab3(nc3_runtime: Path, tmp_path: Path) -> None:
++    old = _artifacts(make_remote(tmp_path / "nc3.git"), nc3_runtime, tmp_path / "nc3")
++    new = _artifacts(make_remote(tmp_path / "nc5.git"), SRC, tmp_path / "nc5")
++    assert (old["version"], new["version"]) == (NC3, cascade.__version__)
++
++    # Heartbeat: empty tree, one parent (the claim's heartbeat), compact
++    # sorted JSON with the same keys and types; only the runtime differs.
++    payloads = []
++    for found in (old, new):
++        fields, message = _headers(found["heartbeat"])
++        assert fields == ["tree", "parent", "author", "committer"]
++        assert found["heartbeat"].startswith(f"tree {EMPTY_TREE}\n")
++        payload = json.loads(message)
++        assert message == json.dumps(payload, sort_keys=True, separators=(",", ":"))
++        payloads.append(payload)
++    assert _shape(payloads[0]) == _shape(payloads[1])
++    assert [payload.pop("runtime") for payload in payloads] == [NC3, cascade.__version__]
++    assert {
++        key: value for key, value in payloads[0].items() if key not in ("renewed_at", "claim_token")
++    } == {
++        key: value for key, value in payloads[1].items() if key not in ("renewed_at", "claim_token")
++    }
++
++    # State commits: same header fields and message lines; runtime differs.
++    for key in ("claim_commit", "state_commit"):
++        shapes = []
++        for found in (old, new):
++            fields, message = _headers(found[key])
++            lines = message.splitlines()
++            shapes.append(
++                (fields, lines[0], lines[1], [line.split("=", 1)[0] for line in lines[2:]])
++            )
++            assert f"runtime={found['version']}" in lines
++        assert shapes[0] == shapes[1]
++        assert shapes[0][2:] == ("", ["holder", "runtime", "created_at"])
++
++    # Published data: same files, same JSON structure, same events.
++    assert old["tree"] == new["tree"]
++    assert _shape(old["graph"]) == _shape(new["graph"])
++    assert _shape(old["ops"]) == _shape(new["ops"])
++    assert [(event["type"], _shape(event)) for event in old["events"]] == [
++        (event["type"], _shape(event)) for event in new["events"]
++    ]
++    assert old["heartbeats_left"] == new["heartbeats_left"] == []
++
++
++def test_heartbeats_of_either_runtime_extend_the_lease_for_the_other(
++    nc3_runtime: Path, tmp_path: Path
++) -> None:
++    remote = make_remote(tmp_path / "remote.git")
++    _seed(remote, tmp_path / "seed", "five", "three")
++    lease = 12.0
++    renew_now = tmp_path / "renew-now"
++    # nodecollab.3 claims "three"; once this runtime has claimed "five", both
++    # renew five seconds later.
++    old_agent = start_agent(
++        nc3_runtime,
++        _spec(
++            remote,
++            tmp_path / "nc3-agent",
++            [
++                {"op": "claim", "agent": "agent-3", "task_id": "three", "timeout": lease},
++                {"op": "wait_for", "marker": str(renew_now)},
++                {"op": "renew", "agent": "agent-3"},
++            ],
++        ),
++    )
++    three_ref = HEARTBEAT_PREFIX + heartbeat_key("three")
++    deadline = time.monotonic() + 120
++    while three_ref not in remote_refs(remote):
++        assert time.monotonic() < deadline, "nodecollab.3 never claimed"
++        assert old_agent.poll() is None, finish_agent(old_agent)
++        time.sleep(0.05)
++    claim = _client(remote, tmp_path / "nc5-agent").claim("agent-5", "five", timeout=lease)
++    assert claim.success, claim.message
++    time.sleep(5)
++    renew_now.touch()
++    renewed = _client(remote, tmp_path / "nc5-agent").renew(
++        "five", agent_id="agent-5", token=claim.data["token"]
++    )
++    assert renewed.success, renewed.message
++    old = finish_agent(old_agent)
++    assert all(item["success"] for item in old["results"]), old
++
++    observer = _client(remote, tmp_path / "observer")
++    checks = {task: observer.check(task).data for task in ("five", "three")}
++    first_expiry = max(check["claimed_at"] for check in checks.values()) + lease
++    renewed_expiry = min(check["lease_expires_at"] for check in checks.values())
++    assert renewed_expiry > first_expiry + 3
++    assert checks["three"]["renewed_at"] > checks["three"]["claimed_at"]
++    assert checks["five"]["renewed_at"] == renewed.data["renewed_at"]
++
++    # Past the claims' own expiry, inside the renewed leases: neither runtime
++    # reclaims a claim the other one renewed.
++    time.sleep(max(0.0, first_expiry + 0.5 - time.time()))
++    checked = run_agent(
++        nc3_runtime, _spec(remote, tmp_path / "nc3-check", [{"op": "check_timeouts"}])
++    )
++    assert checked["results"][0]["released"] == []
++    assert observer.check_timeouts().data.get("released", []) == []
++    assert time.time() < renewed_expiry, "the host was too slow for this timing test"
++    assert _audit(nc3_runtime, remote, tmp_path / "nc3-check") == {
++        "five": "ACTIVE",
++        "three": "ACTIVE",
++    }
++
++    # Once the renewed leases end, nodecollab.3 releases both and deletes
++    # both heartbeats, including the one this runtime wrote.
++    last_expiry = max(check["lease_expires_at"] for check in checks.values())
++    time.sleep(max(0.0, last_expiry + 0.5 - time.time()))
++    released = run_agent(
++        nc3_runtime, _spec(remote, tmp_path / "nc3-check", [{"op": "check_timeouts"}])
++    )["results"][0]["released"]
++    assert sorted(released) == ["five", "three"]
++    assert _heartbeat_refs(remote) == []
++    assert _audit(SRC, remote, tmp_path / "observer") == {"five": "READY", "three": "READY"}
++
++
++def _mixed_run(
++    remote: Path, root: Path, nc3_runtime: Path, agents: list[str]
++) -> list[dict[str, Any]]:
++    """Each agent claims, renews twice and completes its own task; plus one contested task."""
++    processes = []
++    for index, agent in enumerate(agents):
++        runtime = nc3_runtime if index % 2 else SRC
++        ops = [
++            {
++                "op": "claim",
++                "agent": agent,
++                "task_id": f"own-{index}",
++                "agent_tier": TIER,
++                "timeout": 60,
++            },
++            {"op": "renew", "agent": agent, "times": 2, "interval": 0.5},
++            {"op": "complete", "agent": agent},
++        ]
++        if index < 2:
++            ops += [
++                {
++                    "op": "claim",
++                    "agent": agent,
++                    "task_id": "contested",
++                    "agent_tier": TIER,
++                    "timeout": 60,
++                },
++            ]
++        processes.append(
++            start_agent(runtime, _spec(remote, root / f"cache-{index}", ops, writer=agent))
++        )
++    return [finish_agent(process, timeout=300) for process in processes]
++
++
++@pytest.mark.parametrize("guarded", [False, True], ids=["plain-remote", "center-guard"])
++def test_nodecollab3_and_this_runtime_share_a_center(
++    nc3_runtime: Path, tmp_path: Path, request: pytest.FixtureRequest, guarded: bool
++) -> None:
++    agents = [f"agent-{index}" for index in range(6)]
++    remote = make_remote(tmp_path / "remote.git")
++    _seed(remote, tmp_path / "seed", *(f"own-{index}" for index in range(6)), "contested")
++    checkpoints = None
++    if guarded:
++        guard = request.getfixturevalue("center_guard")
++        checkpoints = _install_guard(remote, guard, nc3_runtime, tmp_path, agents)
++
++    results = _mixed_run(remote, tmp_path, nc3_runtime, agents)
++
++    assert {result["version"] for result in results} == {NC3, cascade.__version__}
++    for result in results:
++        assert all(item["success"] for item in result["results"][:4]), result
++    contested = [result["results"][4] for result in results[:2]]
++    assert sorted(item["success"] for item in contested) == [False, True], contested
++    winner = agents[[item["success"] for item in contested].index(True)]
++
++    states = _audit(nc3_runtime, remote, tmp_path / "nc3-audit")
++    assert states == {**{f"own-{index}": "COMPLETED" for index in range(6)}, "contested": "ACTIVE"}
++    assert _audit(SRC, remote, tmp_path / "nc5-audit") == states
++    assert len(_heartbeat_refs(remote)) == 1
++    assert _runtime_markers(remote) >= {NC3, cascade.__version__}
++    owner = _client(remote, tmp_path / "nc5-audit").check("contested").data
++    assert owner["agent_id"] == winner
++    if checkpoints is not None:
++        # The guard verified the pushes incrementally from saved checkpoints.
++        assert any(checkpoints.iterdir())
++
++
++def test_this_runtime_passes_the_center_guard(
++    nc3_runtime: Path, center_guard: Path, tmp_path: Path
++) -> None:
++    remote = make_remote(tmp_path / "remote.git")
++    _seed(remote, tmp_path / "seed", "first", "second")
++    checkpoints = _install_guard(
++        remote, center_guard, nc3_runtime, tmp_path, ["agent-a", "agent-b"]
++    )
++    cache = tmp_path / "agent-a"
++
++    published = run_agent(
++        SRC,
++        _spec(
++            remote,
++            tmp_path / "publisher",
++            [{"op": "add", "id": "third"}],
++            writer="portal-publisher",
++        ),
++    )
++    assert published["results"][0]["success"], published
++    claim = run_agent(
++        SRC,
++        _spec(
++            remote,
++            cache,
++            [
++                {
++                    "op": "claim",
++                    "agent": "agent-a",
++                    "task_id": "first",
++                    "agent_tier": TIER,
++                    "timeout": 60,
++                }
++            ],
++            writer="agent-a",
++        ),
++    )["results"][0]
++    assert claim["success"], claim
++    for _ in range(2):
++        # A new process each time: no fetch, one heartbeat push the guard checks.
++        renewal = run_agent(
++            SRC,
++            _spec(
++                remote,
++                cache,
++                [{"op": "renew", "agent": "agent-a", "task_id": "first", "token": claim["token"]}],
++                writer="agent-a",
++            ),
++        )["results"][0]
++        assert renewal["success"], renewal
++    done = run_agent(
++        SRC,
++        _spec(
++            remote,
++            cache,
++            [{"op": "complete", "agent": "agent-a", "task_id": "first", "token": claim["token"]}],
++            writer="agent-a",
++        ),
++    )["results"][0]
++    assert done["success"], done
++
++    # The guard is active: a claim pushed under another agent's SSH identity
++    # is refused and publishes nothing.
++    before = remote_refs(remote)
++    forged = run_agent(
++        SRC,
++        _spec(
++            remote,
++            tmp_path / "forger",
++            [
++                {
++                    "op": "claim",
++                    "agent": "agent-a",
++                    "task_id": "second",
++                    "agent_tier": TIER,
++                    "timeout": 60,
++                }
++            ],
++            writer="agent-b",
++        ),
++    )["results"][0]
++    assert not forged["success"]
++    assert "SSH writer does not match the registered claiming agent" in forged["message"]
++    assert remote_refs(remote) == before
++
++    assert _audit(nc3_runtime, remote, tmp_path / "nc3-audit") == {
++        "first": "COMPLETED",
++        "second": "READY",
++        "third": "READY",
++    }
++    assert _heartbeat_refs(remote) == []
++    assert _runtime_markers(remote) == {cascade.__version__}
++    assert any(checkpoints.iterdir())
 diff --git a/tests/integration/test_git_storage_snapshot.py b/tests/integration/test_git_storage_snapshot.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..2bb418b1edfb2794ac31106c8694ab3a4948c2da
+index 0000000000000000000000000000000000000000..3caceb4f283cec60e56b3656d190a285931fb89b
 --- /dev/null
 +++ b/tests/integration/test_git_storage_snapshot.py
-@@ -0,0 +1,531 @@
+@@ -0,0 +1,584 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -6450,20 +7558,32 @@ index 0000000000000000000000000000000000000000..2bb418b1edfb2794ac31106c8694ab3a
 +    storage = _storage(remote, tmp_path / "writer")
 +    client = CascadeClient(storage)
 +    intruder = _client(remote, tmp_path / "intruder")
++    assert _ids(client) == ["alpha", "beta"]
 +    real_commit = storage._commit_state
 +    attempts: list[str | None] = []
++    log = tmp_path / "git.log"
++    monkeypatch.setenv("PATH", f"{install_git_counter(tmp_path / 'bin')}:{os.environ['PATH']}")
 +
 +    def race_then_commit() -> str | None:
 +        attempts.append(storage.state_oid)
 +        if len(attempts) == 1:
 +            # Another writer publishes after this attempt read the state.
++            os.environ.pop("CASCADE_GIT_LOG")
 +            assert intruder.add("intruder").success
++            os.environ["CASCADE_GIT_LOG"] = str(log)
 +        return real_commit()
 +
 +    monkeypatch.setattr(storage, "_commit_state", race_then_commit)
++    monkeypatch.setenv("CASCADE_GIT_LOG", str(log))
 +
 +    assert client.add("mine", op_id="add-mine").success
++    monkeypatch.delenv("CASCADE_GIT_LOG")
 +    assert len(attempts) == 2 and attempts[0] != attempts[1]
++    # The redo moves the worktree from the lost commit to the winner's with
++    # one two-tree read-tree; nothing is checked out in full.
++    calls = _git_subcommands(log)
++    assert calls.count("read-tree") == 1 and "checkout-index" not in calls
++    assert calls.count("fetch") == 2 and calls.count("push") == 2
 +    assert _ids(_client(remote, tmp_path / "observer")) == ["alpha", "beta", "intruder", "mine"]
 +    history = _client(remote, tmp_path / "auditor").history(node_id="mine").data["events"]
 +    assert [event["type"] for event in history] == ["node_added"]
@@ -6476,9 +7596,45 @@ index 0000000000000000000000000000000000000000..2bb418b1edfb2794ac31106c8694ab3a
 +    return info.st_ino, info.st_mtime_ns
 +
 +
++def _git_subcommands(log: Path) -> list[str]:
++    """Every logged git subcommand, local or remote, in order."""
++    found = []
++    if not log.exists():
++        return found
++    for line in log.read_text(encoding="utf-8").splitlines():
++        args = [arg for arg in line.split("\x1f") if arg]
++        index = 0
++        while index < len(args) and args[index] in ("-C", "--git-dir", "-c"):
++            index += 2
++        if index < len(args):
++            found.append(args[index])
++    return found
++
++
++def test_construction_runs_no_git_and_reads_no_state(
++    remote: Path, seeded: CascadeClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    assert _ids(_client(remote, tmp_path / "reader")) == ["alpha", "beta"]
++    graph_file = tmp_path / "reader" / "git-state" / "data" / "graph.json"
++    before = _stat(graph_file)
++    assert seeded.add("gamma").success
++    log = tmp_path / "git.log"
++    monkeypatch.setenv("PATH", f"{install_git_counter(tmp_path / 'bin')}:{os.environ['PATH']}")
++    monkeypatch.setenv("CASCADE_GIT_LOG", str(log))
++
++    storage = _storage(remote, tmp_path / "reader")
++
++    assert _git_subcommands(log) == []
++    assert _stat(graph_file) == before
++    assert storage.state_oid is None
++    assert _ids(CascadeClient(storage)) == ["alpha", "beta", "gamma"]
++
++
 +def test_unchanged_state_reuses_the_cache_with_one_fetch_and_no_checkout(
 +    remote: Path, seeded: CascadeClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 +) -> None:
++    assert _ids(_client(remote, tmp_path / "reader")) == ["alpha", "beta"]
++    # A new process trusts the clean copy the previous one recorded.
 +    storage = _storage(remote, tmp_path / "reader")
 +    client = CascadeClient(storage)
 +    graph_file = storage.cache_dir / "git-state" / "data" / "graph.json"
@@ -6489,8 +7645,10 @@ index 0000000000000000000000000000000000000000..2bb418b1edfb2794ac31106c8694ab3a
 +
 +    assert _ids(client) == ["alpha", "beta"]
 +
-+    # One fetch that transfers nothing; the working copy is not rewritten.
++    # One fetch that transfers nothing; the working copy is neither
++    # rewritten nor rehashed.
 +    assert remote_calls(log) == {"fetch": 1}
++    assert not {"read-tree", "checkout-index", "add", "write-tree"} & set(_git_subcommands(log))
 +    assert _stat(graph_file) == before
 +
 +
@@ -6499,14 +7657,17 @@ index 0000000000000000000000000000000000000000..2bb418b1edfb2794ac31106c8694ab3a
 +) -> None:
 +    storage = _storage(remote, tmp_path / "reader")
 +    client = CascadeClient(storage)
++    assert _ids(client) == ["alpha", "beta"]
 +    graph_file = storage.cache_dir / "git-state" / "data" / "graph.json"
 +    graph_file.write_text('{"nodes": {}, "edges": [], "epoch": 0}', encoding="utf-8")
 +    (graph_file.parent / "stray.json").write_text("{}", encoding="utf-8")
 +
-+    assert _ids(client) == ["alpha", "beta"]
-+    oid = remote_refs(remote)[STATE_REF]
-+    assert graph_file.read_text(encoding="utf-8") == git_blob(remote, oid, "data/graph.json")
-+    assert not (graph_file.parent / "stray.json").exists()
++    for reader in (client, _client(remote, tmp_path / "reader")):
++        assert _ids(reader) == ["alpha", "beta"]
++        oid = remote_refs(remote)[STATE_REF]
++        assert graph_file.read_text(encoding="utf-8") == git_blob(remote, oid, "data/graph.json")
++        assert not (graph_file.parent / "stray.json").exists()
++        graph_file.write_text('{"nodes": {}, "edges": [], "epoch": 0}', encoding="utf-8")
 +
 +
 +def test_unreachable_remote_fails_instead_of_serving_the_cache(
@@ -6684,7 +7845,7 @@ index 1f906d2aecebc9fdd94ee10415d96aaf4c993881..eb9624bed0f88551a904666f83172675
          storage.resume.set()
          drain.join(2)
 diff --git a/tests/unit/test_client.py b/tests/unit/test_client.py
-index bc63d38ac5c9e3fb7239180c4ea940e673e24170..ea4f9f6ba9184774588b6b3b5ee74b9af47dddea 100644
+index bc63d38ac5c9e3fb7239180c4ea940e673e24170..a3324f2f15290d02db9a03f92dfccb9f08b949cd 100644
 --- a/tests/unit/test_client.py
 +++ b/tests/unit/test_client.py
 @@ -820,6 +820,19 @@ class TestRenew:
@@ -6707,13 +7868,110 @@ index bc63d38ac5c9e3fb7239180c4ea940e673e24170..ea4f9f6ba9184774588b6b3b5ee74b9a
      def test_renew_pending_task_fails(self, client: CascadeClient):
          """Renewing a PENDING task fails with state info."""
          client.add("a")
-@@ -838,3 +851,35 @@ class TestRenew:
+@@ -838,3 +851,132 @@ class TestRenew:
          assert not r.success
          assert "provided_token" in r.data
          assert "expected_token" in r.data
 +
 +
 +class TestWriteConflicts:
++    def test_redo_waits_grow_for_newcomers_and_shrink_with_time_waited(self):
++        """Long-waiting writers redo sooner than writers that just started."""
++        from cascade.client.base import _redo_ceiling
++
++        assert [_redo_ceiling(n, 0.0) for n in (1, 2, 3, 4, 5)] == [0.05, 0.1, 0.2, 0.4, 0.4]
++        aged = [_redo_ceiling(20, waited) for waited in (0.0, 1.0, 2.0, 3.0, 5.0, 30.0)]
++        assert aged == sorted(aged, reverse=True)
++        assert aged[0] == 0.4 and aged[-1] == 0.01
++        # A writer that has waited 3 s redoes within ~54 ms; a newcomer on
++        # its fourth attempt may wait up to 400 ms.
++        assert _redo_ceiling(20, 3.0) < _redo_ceiling(4, 0.3) / 5
++
++    def test_fast_lost_attempts_redo_until_the_deadline(self, monkeypatch: pytest.MonkeyPatch):
++        """Attempts of 5 ms at the 10 ms wait floor run out of time, not of attempts."""
++        from collections.abc import Generator
++        from contextlib import contextmanager
++
++        from cascade.client import base
++        from cascade.core.cascade import Cascade
++        from cascade.errors import StateConflictError
++
++        clock = [0.0]
++        attempts = [0]
++
++        class Heartbeats:
++            def current(self) -> dict:
++                return {}
++
++            def stage(self, started, active) -> None:
++                pass
++
++        class AlwaysLosesFast:
++            heartbeats = Heartbeats()
++
++            @contextmanager
++            def lock(self, timeout: float = 10.0, blocking: bool = True) -> Generator[None]:
++                attempts[0] += 1
++                clock[0] += 0.005
++                yield
++                raise StateConflictError("another writer published first")
++
++            def load(self) -> Cascade:
++                return Cascade()
++
++        def sleep(seconds: float) -> None:
++            clock[0] += seconds
++
++        monkeypatch.setattr(base.time, "monotonic", lambda: clock[0])
++        monkeypatch.setattr(base.time, "sleep", sleep)
++        monkeypatch.setattr(base.random, "uniform", lambda low, high: high)
++
++        client = CascadeClient(AlwaysLosesFast())  # type: ignore[arg-type]
++        result = client._transact(lambda tx: Result(success=True, message="ok"))
++
++        assert result.code == "STATE_CONFLICT"
++        assert attempts[0] > 1000
++        assert base.WRITE_DEADLINE_SECONDS - 0.02 <= clock[0] <= base.WRITE_DEADLINE_SECONDS
++
++    def test_redo_sleeps_follow_the_ceiling_until_the_deadline(
++        self, tmp_path, monkeypatch: pytest.MonkeyPatch
++    ):
++        from collections.abc import Generator
++        from contextlib import contextmanager
++
++        from cascade.client import base
++        from cascade.errors import StateConflictError
++        from cascade.storage.file_storage import FileStorage
++
++        clock = [1000.0]
++        sleeps: list[float] = []
++
++        def sleep(seconds: float) -> None:
++            sleeps.append(seconds)
++            clock[0] += seconds
++
++        class AlwaysLoses(FileStorage):
++            @contextmanager
++            def lock(self, timeout: float = 10.0, blocking: bool = True) -> Generator[None]:
++                with super().lock(timeout=timeout, blocking=blocking):
++                    clock[0] += 0.2  # one fetch-to-push window
++                    yield
++                    raise StateConflictError("another writer published first")
++
++        monkeypatch.setattr(base.time, "monotonic", lambda: clock[0])
++        monkeypatch.setattr(base.time, "sleep", sleep)
++        monkeypatch.setattr(base.random, "uniform", lambda low, high: high)
++        monkeypatch.setattr(base, "WRITE_DEADLINE_SECONDS", 10.0)
++
++        result = CascadeClient(AlwaysLoses(tmp_path / "state")).add("a")
++
++        assert result.code == "STATE_CONFLICT"
++        assert sleeps[:3] == [0.05, 0.1, 0.2]
++        peak = sleeps.index(max(sleeps))
++        assert sleeps[peak:] == sorted(sleeps[peak:], reverse=True)
++        assert sleeps[-1] == 0.01 and min(sleeps) == 0.01
++        assert clock[0] <= 1000.0 + 10.0 + 0.2
++
 +    def test_a_write_that_keeps_losing_reports_state_conflict(
 +        self, tmp_path, monkeypatch: pytest.MonkeyPatch
 +    ):
@@ -6743,6 +8001,42 @@ index bc63d38ac5c9e3fb7239180c4ea940e673e24170..ea4f9f6ba9184774588b6b3b5ee74b9a
 +        assert result.code == "STATE_CONFLICT"
 +        assert "nothing was published" in result.message
 +        assert AlwaysLoses.attempts > 1
+diff --git a/tests/unit/test_events_unit.py b/tests/unit/test_events_unit.py
+index ef577e35bdac1a981f3c224f549961494e59d7c3..2eda6a2ee51fa8ad6fe7c7ad0bf80893a7ee4ca8 100644
+--- a/tests/unit/test_events_unit.py
++++ b/tests/unit/test_events_unit.py
+@@ -270,7 +270,30 @@ class TestFileEventStoreCore:
+     def test_recover_last_hash_empty_file(self, tmp_path: Path):
+         """Recover returns empty string when file does not exist."""
+         s = FileEventStore(tmp_path)
+-        assert s._last_hash == ""
++        assert s._recover_last_hash() == ""
++
++    def test_emit_chains_to_events_another_store_appended(self, tmp_path: Path):
++        """Each emit reads the head on disk, not the head this store last wrote."""
++        s1 = FileEventStore(tmp_path)
++        s2 = FileEventStore(tmp_path)
++        s1.emit(EventType.NODE_ADDED, logical_ts=0, node_id="a")
++        e2 = s2.emit(EventType.NODE_ADDED, logical_ts=1, node_id="b")
++        e3 = s1.emit(EventType.NODE_ADDED, logical_ts=2, node_id="c")
++        assert e3.prev_hash == e2.hash
++        assert s1.verify_chain()[0]
++
++    def test_emit_rereads_a_log_replaced_with_other_bytes(self, tmp_path: Path):
++        """A replaced log fails the prefix digest and is parsed again in full."""
++        s = FileEventStore(tmp_path)
++        s.emit(EventType.NODE_ADDED, logical_ts=0, node_id="a")
++        s.emit(EventType.NODE_ADDED, logical_ts=1, node_id="b")
++        other_dir = tmp_path / "other"
++        other_dir.mkdir()
++        other = FileEventStore(other_dir)
++        replaced = other.emit(EventType.NODE_ADDED, logical_ts=0, node_id="z")
++        other_dir.joinpath("events.jsonl").replace(tmp_path / "events.jsonl")
++        e = s.emit(EventType.NODE_ADDED, logical_ts=1, node_id="y")
++        assert e.prev_hash == replaced.hash
+ 
+ 
+ # ===========================================================================
 diff --git a/tests/unit/test_file_storage.py b/tests/unit/test_file_storage.py
 index 5dd75037f560f5a817bb1a6fd56a894c37a55113..a58613828e57fb3cce28d2ded3b2901b6eb78451 100644
 --- a/tests/unit/test_file_storage.py
@@ -6826,7 +8120,7 @@ index 5dd75037f560f5a817bb1a6fd56a894c37a55113..a58613828e57fb3cce28d2ded3b2901b
      def test_lock_creates_base_dir(self, storage: FileStorage):
          assert not storage.base_dir.exists()
 diff --git a/tests/unit/test_git_ref_lease.py b/tests/unit/test_git_ref_lease.py
-index 13a90658a53ca6d9925ed7b1fefe67341508b4d8..a2ee8b23f6331d88e545109cbd17595807679eb9 100644
+index 13a90658a53ca6d9925ed7b1fefe67341508b4d8..e53d042e0d6e67a5892a51ca40be686241b5dc83 100644
 --- a/tests/unit/test_git_ref_lease.py
 +++ b/tests/unit/test_git_ref_lease.py
 @@ -22,15 +22,19 @@ Migration: remains the primitive-level contract while GitStorage owns transactio
@@ -6850,7 +8144,50 @@ index 13a90658a53ca6d9925ed7b1fefe67341508b4d8..a2ee8b23f6331d88e545109cbd175958
  
  
  @pytest.fixture
-@@ -316,3 +320,130 @@ def test_invalid_clock_skew_tolerance_is_rejected(
+@@ -224,6 +228,42 @@ def test_namespace_rejects_git_invalid_ref_components(
+         GitRefLease(str(remote), namespace, tmp_path / "cache.git")
+ 
+ 
++def test_namespace_check_agrees_with_git_without_running_it(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """The pure check accepts exactly the namespaces Git accepts in every Cascade ref."""
++    alphabet = ["a", "Z", "0", ".", "_", "-"]
++    candidates = {"default", "bench", "a.lock", "a.lockb", "lock", "-a", "a-", "_", "a.b"}
++    candidates.update(x + y + z for x in alphabet for y in alphabet for z in alphabet)
++    candidates.update(f"x{c}.lock" for c in alphabet)
++
++    def git_accepts(namespace: str) -> bool:
++        refs = (
++            f"refs/heads/cascade-state/{namespace}",
++            f"refs/heads/cascade-archive/{namespace}/0123456789ab",
++            f"refs/heads/cascade-heartbeat/{namespace}/{'0' * 64}",
++            f"refs/cascade-cache/heartbeat/{namespace}/{'0' * 64}",
++        )
++        return all(
++            subprocess.run(["git", "check-ref-format", ref], capture_output=True).returncode == 0
++            for ref in refs
++        )
++
++    expected = {namespace: git_accepts(namespace) for namespace in sorted(candidates)}
++
++    def no_git(*args: Any, **kwargs: Any) -> Any:
++        raise AssertionError("namespace validation started a process")
++
++    monkeypatch.setattr(subprocess, "run", no_git)
++    for namespace, accepted in expected.items():
++        try:
++            git_ref_lease._validate_namespace(namespace)
++        except ValueError:
++            assert not accepted, namespace
++        else:
++            assert accepted, namespace
++
++
+ def test_uri_credentials_are_redacted_from_git_errors(
+     remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+@@ -316,3 +356,130 @@ def test_invalid_clock_skew_tolerance_is_rejected(
              tmp_path / "cache.git",
              clock_skew_tolerance_seconds=value,
          )
@@ -7414,7 +8751,7 @@ index 0000000000000000000000000000000000000000..018cc239447cfe150a9191a1a3b5a753
 +    with pytest.raises(ValueError, match="consumed"):
 +        checkpoint.to_dict()
 diff --git a/uv.lock b/uv.lock
-index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..b94b5732261dd9bcaea7dc492d16833e01dea530 100644
+index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..76a36fca76e4d7402d9ddd337b86b3f34908179e 100644
 --- a/uv.lock
 +++ b/uv.lock
 @@ -13,7 +13,7 @@ wheels = [
@@ -7422,7 +8759,7 @@ index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..b94b5732261dd9bcaea7dc492d16833e
  [[package]]
  name = "cascade-auto"
 -version = "0.8.2+nodecollab.1"
-+version = "0.8.2+nodecollab.3"
++version = "0.8.2+nodecollab.5"
  source = { editable = "." }
  dependencies = [
      { name = "filelock" },

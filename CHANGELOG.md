@@ -16,6 +16,32 @@ lockstep — see the Release Convention in `CLAUDE.md`.
   runtime behave as before. `references/source.md` explains that the file's
   report paths point into the upstream repository and that the .1 package
   it keeps for rollback is not in this kit.
+- `cascade-center-agent`: the bundled Cascade runtime is now
+  `0.8.2+nodecollab.5` (wheel SHA256 `bb6ff0ed…d1ec9d6`), the client runtime
+  the center pins from CascadeCenter-web `110ffe2`. It uses the same refs,
+  commits and heartbeats as .3, so .3 and .5 agents can run side by side and
+  either can renew or complete the other's claim; the center's receive guard
+  stays on .3. Opening the Git storage no longer fetches: with a warm cache a
+  renewal is one push and a state write one fetch and one push.
+- Agents that joined with .3 or .1 update the plugin and re-run join with
+  their original inputs in the same directory; join installs .5 in the
+  directory's `runtime/`, and active tasks can be upgraded without releasing
+  them. Until then the new client refuses the old runtime (`Use the
+  checksum-verified Cascade 0.8.2+nodecollab.5 runtime`), and renewal loops
+  still running the previous plugin directory's scripts must be restarted. To
+  roll back, install the previous plugin (0.25.0 carries .3) and re-run join.
+- The bundled Center clients now come from CascadeCenter-web `110ffe2`
+  (previously `2c2c515`). `cascade-portal-publish.py` is byte-identical and
+  pins .5; `cascade-node-join.cjs` is three-way merged, so it gains only the
+  .5 pin and keeps the kit's rule that a bare project ID needs a configured
+  center. `ai-dev-kit-cascade-init`'s center reference names `110ffe2` and .5.
+
+### Removed
+- `cascade-center-agent` no longer bundles the `0.8.2+nodecollab.3` wheel or
+  `node-storage-concurrency.patch`; the runtime directory carries only the .5
+  wheel, `node-collaboration.patch` and `node-storage-concurrency-nc5.patch`
+  (which produces .5 from the .1 source), and `NODE_SHA256SUMS` lists exactly
+  those files and the two dependencies.
 
 ## [0.25.0] - 2026-10-25
 

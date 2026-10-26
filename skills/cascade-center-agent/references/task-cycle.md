@@ -22,7 +22,7 @@ node <client> --config <config> claim --task TASK_ID
 
 默认租约为 900 秒，`claim --input <private-json>` 可用 `{"timeout":900}` 显式设置。`renew` 延续已有租约和 fencing token，不是新 HTTP 心跳协议。
 
-运行时 `0.8.2+nodecollab.3` 中，每个执行中的领取在任务中心 Git 有一个心跳 ref。续租只推这一个 ref：不写任务状态、不追加事件、不读事件日志，一次续租只有一次 fetch 和一次推送，开销很小，按 60 秒间隔续租不会给中心增加明显负担。领取时同一次推送创建心跳，完成、释放和超时回收时删除。有效租约从领取时间和最近一次有效续租中较晚的一个起算，加上租约时长；过期后不能再续租。
+从运行时 `0.8.2+nodecollab.3` 起，每个执行中的领取在任务中心 Git 有一个心跳 ref。续租只推这一个 ref：不写任务状态、不追加事件、不读事件日志。本插件的 `0.8.2+nodecollab.5` 打开存储时不再 fetch，本地缓存已有时一次续租只有一次推送，一次状态写入是一次 fetch 加一次推送，开销很小，按 60 秒间隔续租不会给中心增加明显负担。领取时同一次推送创建心跳，完成、释放和超时回收时删除。有效租约从领取时间和最近一次有效续租中较晚的一个起算，加上租约时长；过期后不能再续租。
 
 已有 supervisor：在**它自己的启动进程**使用加入目录中的 `with-agent <既有命令及参数>`，并让 supervisor 的 agent ID、tier 使用本次注册返回值。既有运行时负责续租和消息拉取；不要另起第二个心跳或调度器。该包装器只提供身份环境，本身不会启动模型、抢任务或限制并发。
 
@@ -84,6 +84,6 @@ node <client> --config <config> release --task TASK_ID --input /private/release.
 - **`STATE_CONFLICT`**：领取、完成、释放等状态写入是带期望版本的比较并交换，输给其他 agent 的并发写入时，运行时自动在新状态上重做，最多 60 秒；60 秒内都没写成才返回此码，这时没有写入任何内容，等几秒后用同一输入重试同一命令即可。续租返回此码（心跳在变、续租未确认，或租约仍有效需要再续）时，立即再续一次。
 - **过期后续租被拒绝**：租约已到期时，客户端不再续租，而是把这次领取交回并返回 `STALE_TOKEN`（`Stale fencing token ...`）；中心先判定过期时，推送被拒并报 `Execution lease has expired at the center; it cannot be renewed`。两种情况都表示已经失去这次领取：停止该任务的写入，不提交完成，把已做的工作保存到可交接的位置。任务回到 READY 后，用户允许时可以重新领取，会拿到新 token；重新领取前先读 `thread`。为避免这种情况，在到期前留足余量续租。
 - **心跳错误**：续租推送被中心拒绝时按原因处理。`Heartbeat time differs from center time`：本机时钟与中心相差超过 60 秒，校准时钟后再续租。`Heartbeat does not belong to the task's current ACTIVE claim` 或 `SSH writer does not match the heartbeat's agent`：本实例已不持有这次领取，或用了别的实例的配置，停止该任务的写入并读回状态。网页任务详情显示“心跳记录无效”时，该心跳不延长租约，只能由中心运维清理；报告给中心维护人，不要自己删除或改写心跳 ref。
-- **`Cannot reclaim a valid execution lease`**：中心拒绝了把租约仍有效的任务按超时回收，整次推送被拒，状态没有改变。领取时运行时会顺带回收已到期的任务；.1 只按领取时间判断到期，看不到心跳，会把靠心跳续租的长任务当成过期。本实例还在用 .1 时，不要重试原命令，先重新运行 join 升级到 .3；已是 .3 时，多半是本机时钟比中心快，校准时钟后再试。那个任务仍由其他 agent 执行，不能接管。
-- **`Use the checksum-verified Cascade 0.8.2+nodecollab.3 runtime`**：插件已更新、本实例的运行时还是旧版，按 SKILL.md“已加入的实例升级运行时”重新运行 join。报的是 `...0.8.2+nodecollab.1 runtime` 时则相反：运行时已是 .3，调用的还是旧版插件目录的脚本，改用新目录并重启该进程。
-- **`State writes need runtime 0.8.2+nodecollab.3 or later after the runtime switch`** 或 **`Renewal events are refused after the runtime switch; renew with a heartbeat`**：中心已只接受 .3 的写入，重新运行 join 升级后再操作。
+- **`Cannot reclaim a valid execution lease`**：中心拒绝了把租约仍有效的任务按超时回收，整次推送被拒，状态没有改变。领取时运行时会顺带回收已到期的任务；.1 只按领取时间判断到期，看不到心跳，会把靠心跳续租的长任务当成过期。本实例还在用 .1 时，不要重试原命令，先重新运行 join 升级到 .5；已是 .3 或 .5 时，多半是本机时钟比中心快，校准时钟后再试。那个任务仍由其他 agent 执行，不能接管。
+- **`Use the checksum-verified Cascade 0.8.2+nodecollab.5 runtime`**：插件已更新、本实例的运行时还是旧版，按 SKILL.md“已加入的实例升级运行时”重新运行 join。报的是 `...0.8.2+nodecollab.3 runtime` 或 `...0.8.2+nodecollab.1 runtime` 时则相反：运行时已是 .5，调用的还是旧版插件目录的脚本，改用新目录并重启该进程。
+- **`State writes need runtime 0.8.2+nodecollab.3 or later after the runtime switch`** 或 **`Renewal events are refused after the runtime switch; renew with a heartbeat`**：中心已只接受 .3 及以后的写入，重新运行 join 升级到 .5 后再操作。

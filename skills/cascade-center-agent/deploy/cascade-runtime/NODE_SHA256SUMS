@@ -1,5 +1,5 @@
-4f6b1dbe458e01256b8c546ecb7dda72d912bb741475074f0d740cd63708e041  cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl
+bb6ff0ed843745525f1e4aed637d5144cf90991967e4ea67aa5215544d1ec9d6  cascade_auto-0.8.2+nodecollab.5-py3-none-any.whl
 334b8459e3051da36bb89dd6dc31fb14e893a80c91b0da655e33b8864bbe5fcb  node-collaboration.patch
-fa5c2af0a305958511015ebb438ba7ad64fd65b93d2ecf143c031b61e24e819f  node-storage-concurrency.patch
+24348b2af1d1b99e47377f272e5790e59464bdf6492d5eca567587ec2d4896ee  node-storage-concurrency-nc5.patch
 96f5f6344709aa1572bbf631c640e4ebeeb519e08da902c39a001882f30ac258  node-dependencies/filelock-3.29.0-py3-none-any.whl
 f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548  node-dependencies/typing_extensions-4.15.0-py3-none-any.whl

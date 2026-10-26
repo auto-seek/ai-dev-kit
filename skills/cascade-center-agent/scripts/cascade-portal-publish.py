@@ -23,9 +23,10 @@ class PublishError(Exception):
     """A rejected contract or an unverified publication."""
 
 
-# The node protocol runtime. Its verified reads take no lease, and check only
-# what was appended since the last verified read of the same cache.
-NODE_RUNTIME = "0.8.2+nodecollab.3"
+# The node protocol runtime of agents and the center publisher. Its verified reads
+# take no lease, and check only what was appended since the last verified read of
+# the same cache. The receive guard pins its own runtime (cascade-node-receive.py).
+NODE_RUNTIME = "0.8.2+nodecollab.5"
 # Approved 0.8.0 builds serve centers without the node protocol. They have no
 # lease-free read, so their verified reads keep the transaction lease.
 LEGACY_RUNTIME = re.compile(r"0\.8\.0(?:\+[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*)?")
@@ -213,8 +214,8 @@ def matching_nodes(graph, specs):
 
 def check_runtime_version(version):
     # Source approval still belongs to deployment; a local label is not an upgrade.
-    # 0.8.2+nodecollab.1 is refused: it has no lease-free read or incremental
-    # verification, and the center switches this script and its node runtime together.
+    # Other node runtimes are refused: agents and the center switch these scripts
+    # and their node runtime together.
     require(version == NODE_RUNTIME or LEGACY_RUNTIME.fullmatch(version),
             f"Use the approved Cascade 0.8.0 environment (an approved local build is allowed) or the pinned {NODE_RUNTIME} node runtime")
 

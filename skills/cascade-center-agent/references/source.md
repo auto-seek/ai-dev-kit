@@ -1,10 +1,10 @@
 # 来源与维护
 
-本 skill 是通用的 Cascade agent 接入包，`scripts/` 基于 CascadeCenter-web 已上线版本 `2c2c515c078a58fae401f1c78c36a09e7a1ad2a5` 的客户端及其直接依赖。插件只改了 `cascade-node-join.cjs` 的中心地址来源：移除默认站点，单独的项目 ID 依次使用 `--origin`、`CASCADE_CENTER_ORIGIN` 或同目录已保存的注册地址；复制的 `项目ID@中心地址`、`--harness` 和归属确认码与源版本一致，未改变服务端协议。此处仓库地址只记录代码来源，不用于选择接入项目或部署服务器。完整清单见 [source.json](source.json)。
+本 skill 是通用的 Cascade agent 接入包，`scripts/` 基于 CascadeCenter-web 已上线版本 `110ffe2b08ae282d1263275c6c0b26aea100a3f2` 的客户端及其直接依赖。插件只改了 `cascade-node-join.cjs` 的中心地址来源：移除默认站点，单独的项目 ID 依次使用 `--origin`、`CASCADE_CENTER_ORIGIN` 或同目录已保存的注册地址；复制的 `项目ID@中心地址`、`--harness` 和归属确认码与源版本一致，未改变服务端协议。此处仓库地址只记录代码来源，不用于选择接入项目或部署服务器。完整清单见 [source.json](source.json)。
 
 源仓库：AutoSeek 内部的 CascadeCenter-web，不公开；此处只记录提交号。
 
-`deploy/cascade-runtime/` 携带固定 Cascade `0.8.2+nodecollab.3` wheel、离线依赖、两个源码 patch（`node-collaboration.patch` 产出 .1，`node-storage-concurrency.patch` 在其上产出 .3）、校验清单和来源记录。中心发行物还带 `0.8.2+nodecollab.1` wheel 供其回滚和混合运行时测试；agent 只装 .3，本包不带 .1 wheel，`NODE_SHA256SUMS` 相应少一行，其余运行时文件（含 `NODE_PROVENANCE.json`）与源版本逐字节一致。`NODE_PROVENANCE.json` 是上游原样拷贝，在本包里读要注意两点：`verification_report` 和 `deployment_record` 是相对上游 CascadeCenter-web 仓库的路径，本包里没有这些文件；`previous` 说 .1 运行时包保留用于回滚，指的是上游仓库，本包不带这个包，回滚要用上游仓库或旧版插件。wheel 内保留原项目及依赖许可。首次安装的发行物完整性检查是安装所需；日常使用不重复做副本哈希清单。
+`deploy/cascade-runtime/` 携带固定 Cascade `0.8.2+nodecollab.5` wheel、离线依赖、两个源码 patch（`node-collaboration.patch` 在上游基线上产出 .1，`node-storage-concurrency-nc5.patch` 在 .1 源码上产出 .5）、校验清单和来源记录。中心发行物还带 .3 和 .1 的 wheel 以及 .3 的 patch（.3 是中心 receive guard 的运行时，也用于回滚和混跑测试）；agent 只装 .5，本包不带这三个文件，`NODE_SHA256SUMS` 相应少三行，和本包实际带的文件一一对应；其余运行时文件（含 `NODE_PROVENANCE.json`）与源版本逐字节一致。`NODE_PROVENANCE.json` 是上游原样拷贝，在本包里读要注意两点：`verification_report` 和 `kept` 中的 `deployment_record` 是相对上游 CascadeCenter-web 仓库的路径，本包里没有这些文件；`kept` 列出的 .3 和 .1 运行时包留在上游仓库，本包不带，agent 回滚时装回上一版插件（0.25.0 带 .3）。wheel 内保留原项目及依赖许可。首次安装的发行物完整性检查是安装所需；日常使用不重复做副本哈希清单。
 
 维护时从已验证的中心发行物同步客户端及完整依赖，按新协议更新 `SKILL.md` 和任务执行说明；不要只替换一个 wheel 或自行安装最新版。这个版本面向 macOS/Linux，Windows 使用 WSL；不声明原生 Windows 安装支持。
 
