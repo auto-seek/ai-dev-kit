@@ -1,6 +1,7 @@
 {
   "version": "0.8.2+nodecollab.6",
-  "release_status": "release candidate for agents and the center publisher: local build, not an upstream tag, not deployed",
+  "release_status": "runtime of agents and the center publisher; deployed on the center server 2026-10-27 (release 51a3e5e); local build, not an upstream tag",
+  "deployment_record": "../../docs/verification/nodecollab6-rollout-20261027.md",
   "source_base": "bcffbf13c32d188cc9655d2e8f19719742480b7a",
   "patches": [
     "node-collaboration.patch",
@@ -37,8 +38,9 @@
         "node-collaboration.patch",
         "node-storage-concurrency-nc5.patch"
       ],
-      "release_status": "the center publisher's runtime in production (release 110ffe2)",
-      "kept_for": "rollback of the center and agents from nodecollab.6, and the mixed-runtime tests"
+      "release_status": "the center publisher's runtime 2026-10-26 to 2026-10-27 (release 110ffe2); replaced by nodecollab.6",
+      "kept_for": "rollback of the center and agents from nodecollab.6, and the mixed-runtime tests",
+      "deployment_record": "../../docs/verification/nodecollab6-rollout-20261027.md"
     },
     {
       "version": "0.8.2+nodecollab.3",

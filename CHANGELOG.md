@@ -8,6 +8,14 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Changed
+- `cascade-center-agent`: `deploy/cascade-runtime/NODE_PROVENANCE.json` now
+  comes from CascadeCenter-web `47593c1` (previously `51a3e5e`). It records
+  that .6 is deployed on the center (2026-10-27) and that .5 has been
+  replaced, and links the rollout record. The scripts, wheel, patches and
+  `NODE_SHA256SUMS` are unchanged, and join and the node runtime behave as
+  before.
+
 ## [0.27.0] - 2026-10-27
 
 ### Changed

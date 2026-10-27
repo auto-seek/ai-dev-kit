@@ -1,6 +1,6 @@
 {
   "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
-  "sourceCommit": "51a3e5e07f285ccfc4be71da4ad247af6306fb31",
+  "sourceCommit": "47593c18f0c9321ec23d1c208160f2f7ae7a6c74",
   "files": [
     "scripts/cascade-node-client.cjs",
     "scripts/cascade-node-join.cjs",
