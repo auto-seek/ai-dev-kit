@@ -186,7 +186,7 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `deploy/cascade-runtime/` carries only the .6 wheel (SHA256 `f3c341c3…b270c14e`), `node-collaboration.patch`, `node-storage-concurrency-nc6.patch`, `NODE_PROVENANCE.json` and the vendored dependencies byte-identical to the source; the .5 wheel and patch are dropped with their `NODE_SHA256SUMS` lines, which match the shipped files and pass `shasum -c`.
 - [x] `SKILL.md` and `references/task-cycle.md` say .3, .5 and .6 run side by side, describe the short wait before a claim right after a completion (median about 0.3 s slower, shorter tail), how a .5, .3 or .1 agent upgrades and how to roll back; source records name `51a3e5e` and .6.
 - [x] `tests/cascade-center-config.test.cjs` uses the .6 wheel; `npm run build`, skill validation, the Center SSH admission run, gitleaks and an internal-address grep pass.
-- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review, once the center server runs .6.
+- [x] Version bump in all three manifests and the release, done by the kit maintainer after review, once the center server runs .6 (0.27.0; the center switched on 2026-10-27).
 
 ## workstation-pool
 
