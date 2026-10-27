@@ -1,15 +1,16 @@
 {
-  "version": "0.8.2+nodecollab.5",
+  "version": "0.8.2+nodecollab.6",
   "release_status": "release candidate for agents and the center publisher: local build, not an upstream tag, not deployed",
   "source_base": "bcffbf13c32d188cc9655d2e8f19719742480b7a",
   "patches": [
     "node-collaboration.patch",
-    "node-storage-concurrency-nc5.patch"
+    "node-storage-concurrency-nc6.patch"
   ],
   "source_commits": {
     "0.8.2+nodecollab.1": "56475224ecf2f582f59fe40cbc9ba77248db8caf",
     "0.8.2+nodecollab.3": "df5121c651e5afcec49a269cf895de577a2269e8",
-    "0.8.2+nodecollab.5": "cef0be479cb5f0eeab52398c692d4fe002418d46"
+    "0.8.2+nodecollab.5": "cef0be479cb5f0eeab52398c692d4fe002418d46",
+    "0.8.2+nodecollab.6": "75a23a9d15bc93c6341631ba4cea7f2555673653"
   },
   "source_branch": "claude/storage-concurrency-df5624 (local; not pushed)",
   "superseded": "0.8.2+nodecollab.2 was an internal intermediate build; it is not distributed. 0.8.2+nodecollab.4 is reserved and was not built",
@@ -30,14 +31,24 @@
   ],
   "kept": [
     {
+      "version": "0.8.2+nodecollab.5",
+      "wheel": "cascade_auto-0.8.2+nodecollab.5-py3-none-any.whl",
+      "patches": [
+        "node-collaboration.patch",
+        "node-storage-concurrency-nc5.patch"
+      ],
+      "release_status": "the center publisher's runtime in production (release 110ffe2)",
+      "kept_for": "rollback of the center and agents from nodecollab.6, and the mixed-runtime tests"
+    },
+    {
       "version": "0.8.2+nodecollab.3",
       "wheel": "cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl",
       "patches": [
         "node-collaboration.patch",
         "node-storage-concurrency.patch"
       ],
-      "release_status": "deployed on the center server 2026-10-25 (receive guard, publisher and center runtime)",
-      "kept_for": "the receive guard (cascade-node-receive.py pins it), rollback of the center and agents from nodecollab.5, agents not yet upgraded, and the mixed-runtime tests",
+      "release_status": "deployed on the center server 2026-10-25; still the receive guard's runtime",
+      "kept_for": "the receive guard (cascade-node-receive.py pins it), agents not yet upgraded, and the mixed-runtime tests",
       "deployment_record": "../../docs/verification/nodecollab3-rollout-20261025.md"
     },
     {
@@ -49,5 +60,5 @@
       "kept_for": "agents not yet upgraded while the receive guard runs without --require-runtime, and the mixed-runtime tests of that guard; the center server ran it until 2026-10-25"
     }
   ],
-  "verification_report": "../../docs/verification/nodecollab5-client-20261025.md"
+  "verification_report": "../../docs/verification/nodecollab6-client-20261026.md"
 }

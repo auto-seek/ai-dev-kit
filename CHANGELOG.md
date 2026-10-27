@@ -8,6 +8,36 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Changed
+- `cascade-center-agent`: the bundled Cascade runtime is now
+  `0.8.2+nodecollab.6` (wheel SHA256 `f3c341c3…b270c14e`), the client runtime
+  the center pins from CascadeCenter-web `51a3e5e`. Refs, commits, heartbeats
+  and remote calls per operation are those of .5, so .3, .5 and .6 agents can
+  run side by side and renew or complete each other's claims; the center's
+  receive guard stays on .3. After writing task state while other agents are
+  writing, the next write waits about as long as that write took plus 50 ms
+  (at most 2 seconds), so a claim right after a completion no longer collides
+  with the redos the completion caused. In the center's staggered 20-agent
+  test the claim p95 fell from about 6.1 to 3.3 seconds and the median rose by
+  about 0.3 seconds. Reads, renewals and a lone writer do not wait.
+- Agents on .5, .3 or .1 update the plugin and re-run join with their
+  original inputs in the same directory; join installs .6 in the directory's
+  `runtime/`, and active tasks can be upgraded without releasing them. To roll
+  back, install the previous plugin (0.26.0 carries .5, 0.25.0 carries .3) and
+  re-run join.
+- The bundled Center clients now come from CascadeCenter-web `51a3e5e`
+  (previously `110ffe2`). `cascade-portal-publish.py` is byte-identical and
+  pins .6; `cascade-node-join.cjs` is three-way merged, so it gains only the
+  .6 pin and keeps the kit's rule that a bare project ID needs a configured
+  center. `ai-dev-kit-cascade-init`'s center reference names `51a3e5e` and .6.
+
+### Removed
+- `cascade-center-agent` no longer bundles the `0.8.2+nodecollab.5` wheel or
+  `node-storage-concurrency-nc5.patch`; the runtime directory carries only the
+  .6 wheel, `node-collaboration.patch`, `node-storage-concurrency-nc6.patch`
+  (which produces .6 from the .1 source) and the two dependencies, and
+  `NODE_SHA256SUMS` lists exactly those files.
+
 ## [0.26.0] - 2026-10-26
 
 ### Changed

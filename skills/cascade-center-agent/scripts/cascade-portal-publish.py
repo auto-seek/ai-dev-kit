@@ -26,7 +26,7 @@ class PublishError(Exception):
 # The node protocol runtime of agents and the center publisher. Its verified reads
 # take no lease, and check only what was appended since the last verified read of
 # the same cache. The receive guard pins its own runtime (cascade-node-receive.py).
-NODE_RUNTIME = "0.8.2+nodecollab.5"
+NODE_RUNTIME = "0.8.2+nodecollab.6"
 # Approved 0.8.0 builds serve centers without the node protocol. They have no
 # lease-free read, so their verified reads keep the transaction lease.
 LEGACY_RUNTIME = re.compile(r"0\.8\.0(?:\+[a-zA-Z0-9]+(?:[._-][a-zA-Z0-9]+)*)?")

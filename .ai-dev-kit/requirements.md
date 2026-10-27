@@ -180,6 +180,14 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `tests/cascade-center-config.test.cjs` uses the .5 wheel; `npm run build`, skill validation, gitleaks and an internal-address grep pass.
 - [x] Version bump in all three manifests and the release, done by the kit maintainer after review (0.26.0).
 
+## center-nodecollab6
+
+- [x] Package the CascadeCenter-web `51a3e5e` client: `cascade-portal-publish.py` byte-identical with the .6 pin; `cascade-node-join.cjs` three-way merged so it gains only the `0.8.2+nodecollab.6` pin while keeping the kit's no-built-in-center rule; the other eight files unchanged and identical.
+- [x] `deploy/cascade-runtime/` carries only the .6 wheel (SHA256 `f3c341c3…b270c14e`), `node-collaboration.patch`, `node-storage-concurrency-nc6.patch`, `NODE_PROVENANCE.json` and the vendored dependencies byte-identical to the source; the .5 wheel and patch are dropped with their `NODE_SHA256SUMS` lines, which match the shipped files and pass `shasum -c`.
+- [x] `SKILL.md` and `references/task-cycle.md` say .3, .5 and .6 run side by side, describe the short wait before a claim right after a completion (median about 0.3 s slower, shorter tail), how a .5, .3 or .1 agent upgrades and how to roll back; source records name `51a3e5e` and .6.
+- [x] `tests/cascade-center-config.test.cjs` uses the .6 wheel; `npm run build`, skill validation, the Center SSH admission run, gitleaks and an internal-address grep pass.
+- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review, once the center server runs .6.
+
 ## workstation-pool
 
 - [x] `templates/workstation/` provides the generic Linux workstation image (Xvfb, `ws-run` batch/session entry with process-group timeout and `ws-run.json`, `ws-shot`, `ws-input`) and a Godot .NET example layer with official SHA512-checked downloads; `tests/workstation.test.cjs` covers the entry with real containers.

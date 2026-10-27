@@ -52,7 +52,7 @@ async function privateFile(filename) {
   return fs.readFile(filename, "utf8");
 }
 async function runtime(directory) {
-  const version = "0.8.2+nodecollab.5";
+  const version = "0.8.2+nodecollab.6";
   if (process.env.NODE_CASCADE_PYTHON) {
     const python = process.env.NODE_CASCADE_PYTHON;
     if (!path.isAbsolute(python))

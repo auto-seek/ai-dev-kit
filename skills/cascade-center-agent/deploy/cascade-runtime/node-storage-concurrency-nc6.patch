@@ -1,8 +1,8 @@
 diff --git a/.ai-dev-kit/requirements.md b/.ai-dev-kit/requirements.md
-index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..3a47ddcea3430d326da4260691e8bb2479e7486e 100644
+index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..1ad3a629e0396eb4998e80795a9c01b4314c8c17 100644
 --- a/.ai-dev-kit/requirements.md
 +++ b/.ai-dev-kit/requirements.md
-@@ -37,3 +37,39 @@
+@@ -37,3 +37,46 @@
  - [x] Record and replay reservation release without losing task context or contracts; expose expiry through claim and check-timeouts.
  - [x] Verify clock boundary, renewals, old state, concurrent claim and real file/Git backends; complete test review.
  - [x] Document the runtime installation and shared-center cleanup procedure, including participant and recovery-tool upgrade limitations.
@@ -42,14 +42,63 @@ index 1e1495905deb2d6fb396c459ff8868e75d06c9fd..3a47ddcea3430d326da4260691e8bb24
 +- [x] Test: no Git call at construction, five-command renewal in a new process, single read-tree redo, recorded clean copy reuse and restore, chain head after foreign appends and replaced logs, namespace check against git check-ref-format, redo ceilings, remote calls with construction against nodecollab.1, .2 and .3.
 +- [x] Prove interoperation with the released nodecollab.3: identical formats apart from the runtime marker, heartbeats honoured both ways, mixed agents on one namespace, and writes accepted by the center guard running on nodecollab.3 with --require-runtime.
 +- [x] Let the 60-second deadline, not an attempt count, end redo.
++
++## git-yield-after-publish (nodecollab.6)
++
++- [x] Find why nodecollab.5 claims lose more compare-and-swaps than .3 at the center and reproduce it with the center's own scripts, guard and seed.
++- [x] Yield after the cache's own publish while other writers are active, unless the next write starts within 50 ms; never for reads, renewals, redos or a lone writer.
++- [x] Parse only the winner's lines on a redo after a discarded append.
++- [x] Keep refs, payloads and remote calls of nodecollab.3/.5; stamp runtime=0.8.2+nodecollab.6.
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index babb0f2817d704b6494c079f4638927fdaae42a4..345fe2669d2270cf8984acaef4023182aacbfd80 100644
+index babb0f2817d704b6494c079f4638927fdaae42a4..d008e313e911908e2ee5feaac9940a15b9e007a1 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -3,6 +3,175 @@
+@@ -3,6 +3,217 @@
  All notable changes to this project will be documented in this file.
  Generated from [conventional commits](https://www.conventionalcommits.org/).
  
++## [0.8.2+nodecollab.6] - 2026-10-26
++
++Local build on top of 0.8.2+nodecollab.5, a client upgrade for centers that
++run nodecollab.3; not an upstream tag. Refs, commits, payloads and remote
++calls per operation are unchanged; only the `runtime` value differs, so .3,
++.5 and .6 agents can share a center.
++
++### Fixed
++
++- Claims that follow the agent's own completion lost more compare-and-swaps
++  under nodecollab.5 than under .3 (center bench: 1.2–1.3 receive-hook runs
++  per claim against 1.0–1.1; completions unchanged). A published commit
++  makes every writer whose transaction was in flight lose and redo at once;
++  their redos read the new state within about 50 ms and land about one
++  attempt later. Because opening storage no longer fetches, a command-line
++  agent's claim reached its own fetch 0.3–0.5 s sooner after its completion,
++  inside that interval: it read the same state as the redos and lost to one
++  of them, often after the receive hook had already checked it. A write a
++  cache starts more than 50 ms after its own publish, while other writers
++  are active, now waits until the publishing attempt's duration plus 50 ms
++  has passed (at most 2 seconds). Writes started at once in the same process
++  are ahead of the redos and still go immediately. In a local copy of the
++  center's staggered 20-agent bench (center scripts per operation, guard on
++  nodecollab.3, its seed, 80 ms round trips; first minute excluded), claims
++  averaged 1.62 guard runs with nodecollab.5, 1.26 with this change and 1.20
++  with nodecollab.3; claim p95 6.51 s, 4.72 s and 4.99 s. The median claim
++  is back at nodecollab.3's 1.97 s (nodecollab.5: 1.48 s); renewals and
++  connections per claim keep the nodecollab.5 savings.
++- A redo after a lost compare-and-swap parsed the whole event log again: the
++  recorded chain head included the discarded append. The head before that
++  append is now kept as well, so only the winner's lines are parsed.
++
++### Added
++
++- `tests/acceptance/git_storage_back_to_back.py`: compare-and-swap attempts
++  of writes that follow the writer's own publish, immediately or after a
++  gap, with the yield on or off.
++- Interop cases against the nodecollab.5 wheel (`CASCADE_NODECOLLAB5_WHEEL`):
++  mixed .5 and .6 agents claiming, renewing, completing and contesting one
++  task, on a plain remote and behind the center guard; a claim renewed and
++  completed alternately by .5 and .6 in one cache.
++
 +## [0.8.2+nodecollab.5] - 2026-10-25
 +
 +Local build on top of 0.8.2+nodecollab.3, the client upgrade for centers that
@@ -223,10 +272,10 @@ index babb0f2817d704b6494c079f4638927fdaae42a4..345fe2669d2270cf8984acaef4023182
  
  ### Fixed
 diff --git a/docs/development/feature-ledger.md b/docs/development/feature-ledger.md
-index f64ba225c95fd257ece868152daedbf8ea3859d9..0d4894c4c8ab4c0013677ffa8a4fbf5e8f7f742a 100644
+index f64ba225c95fd257ece868152daedbf8ea3859d9..15025b568dcccf36ee5459f429cfa17d1e943b9b 100644
 --- a/docs/development/feature-ledger.md
 +++ b/docs/development/feature-ledger.md
-@@ -68,3 +68,39 @@
+@@ -68,3 +68,50 @@
  - Coordination notes: only the center mutates task state; implementation agents do not touch the shared cloud namespace.
  - Review: Galileo independently approved source, four changed test files and the retry runbook; 72 focused checks plus 4 registry checks passed independently. Audit-field negative tests exposed and closed one replay validation defect.
  - Deployment: not performed. Shared namespace migration requires the other ACTIVE worker owners to coordinate a safe stop and compatible runtime upgrade.
@@ -266,9 +315,20 @@ index f64ba225c95fd257ece868152daedbf8ea3859d9..0d4894c4c8ab4c0013677ffa8a4fbf5e
 +- Tests: tests/integration/test_git_storage_snapshot.py; test_git_storage_heartbeats.py; test_git_storage_compat.py (CASCADE_NODECOLLAB3_WHEEL adds the .3 column); test_git_storage_nc3_interop.py (CASCADE_NODECOLLAB3_WHEEL, CASCADE_CENTER_GUARD); tests/unit/test_events_unit.py; tests/unit/test_client.py; tests/unit/test_git_ref_lease.py.
 +- Docs: docs/git-storage.md runtime contract; docs/git-heartbeat-refs.md; CHANGELOG.md.
 +- Deployment: not performed. The center's guard already accepts nodecollab.N for N >= 3; center scripts that pin the installed version to .3 must accept .5; then agents upgrade one at a time.
++
++## git-yield-after-publish
++
++- Status: implemented and built locally on 2026-10-26 as 0.8.2+nodecollab.6; not pushed, released or deployed
++- Branch: claude/storage-concurrency-df5624
++- Created: 2026-10-26
++- Goal: claims right after an agent's own completion lose no more compare-and-swaps than under nodecollab.3, keeping the nodecollab.5 renewal and connection savings.
++- Scope: GitStorage write start (yield after own publish), FileEventStore chain heads, an acceptance benchmark, docs and the version.
++- Non-goals: no change to refs, payloads, remote calls, the receive guard or the center scripts.
++- Tests: tests/integration/test_git_storage_snapshot.py (yield cases); tests/unit/test_events_unit.py (redo after a discarded append); tests/integration/test_git_storage_nc3_interop.py (.5/.6 cases, CASCADE_NODECOLLAB5_WHEEL); tests/acceptance/git_storage_back_to_back.py.
++- Docs: docs/git-storage.md runtime contract; docs/git-heartbeat-refs.md; CHANGELOG.md.
 diff --git a/docs/git-heartbeat-refs.md b/docs/git-heartbeat-refs.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..0eb8a0985d927f3db3a6483bec98a990d7d5263b
+index 0000000000000000000000000000000000000000..9e10e46e28484631a553479a03f23ae379758553
 --- /dev/null
 +++ b/docs/git-heartbeat-refs.md
 @@ -0,0 +1,183 @@
@@ -280,11 +340,11 @@ index 0000000000000000000000000000000000000000..0eb8a0985d927f3db3a6483bec98a990
 +below are in `cascade.types` and `cascade.core.node`, so a hook running the
 +same runtime can use them instead of reimplementing the rules.
 +
-+0.8.2+nodecollab.5 writes exactly the same refs and objects; only the
-+`runtime` value is `0.8.2+nodecollab.5`. "A pinned runtime" below means a
-+runtime string the hook accepts. A hook should accept `0.8.2+nodecollab.N`
-+for every N ≥ 3 (as CascadeCenter-web's `cascade-node-receive.py` does), so
-+agents can move between heartbeat runtimes without a server change.
++0.8.2+nodecollab.5 and .6 write exactly the same refs and objects; only the
++`runtime` value differs. "A pinned runtime" below means a runtime string the
++hook accepts. A hook should accept `0.8.2+nodecollab.N` for every N ≥ 3 (as
++CascadeCenter-web's `cascade-node-receive.py` does), so agents can move
++between heartbeat runtimes without a server change.
 +
 +## Refs
 +
@@ -315,7 +375,7 @@ index 0000000000000000000000000000000000000000..0eb8a0985d927f3db3a6483bec98a990
 +| `claim_token` | integer ≥ 1 (not boolean) | the claim's fencing token |
 +| `renewed_at` | finite number, Unix seconds | time of this renewal |
 +| `timeout` | finite number > 0, or null | lease length from `renewed_at` |
-+| `runtime` | string | the writer's version, `0.8.2+nodecollab.3` or `0.8.2+nodecollab.5` |
++| `runtime` | string | the writer's version, `0.8.2+nodecollab.N` with N ≥ 3 |
 +
 +`Heartbeat.from_payload` enforces the keys and types. A malformed payload, a
 +payload of another namespace, or one whose task does not hash to the ref key
@@ -451,15 +511,15 @@ index 0000000000000000000000000000000000000000..0eb8a0985d927f3db3a6483bec98a990
 +after step 3 means re-allowing older writers, which then do not see
 +heartbeat-only renewals.
 +
-+Moving agents from nodecollab.3 to nodecollab.5, before or after step 3,
++Moving agents between nodecollab.3, .5 and .6, before or after step 3,
 +needs no server change when rules 3 and 10 accept every nodecollab.N with
-+N ≥ 3. Agents can be moved one at a time; a .3 agent and a .5 agent honour
++N ≥ 3. Agents can be moved one at a time; agents of these runtimes honour
 +each other's heartbeats and contend on the same refs.
 diff --git a/docs/git-storage.md b/docs/git-storage.md
-index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c995323f820821 100644
+index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..9b772137686ae2a2ace3ab0f354a5182d1620b5d 100644
 --- a/docs/git-storage.md
 +++ b/docs/git-storage.md
-@@ -16,27 +16,216 @@ is used, exclude these prefixes from CI branch triggers:
+@@ -16,27 +16,232 @@ is used, exclude these prefixes from CI branch triggers:
  
  ```text
  cascade-state/<namespace>
@@ -486,12 +546,12 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 -- A lost renewal aborts publication. A process killed before the state push
 -  publishes nothing; a process killed after ref acceptance leaves a complete
 -  recoverable snapshot. Stale transaction locks expire and remain fenced.
-+This section describes 0.8.2+nodecollab.5, a client upgrade on top of
-+nodecollab.3. It writes the refs, commits and payloads of nodecollab.3, with
-+`runtime=0.8.2+nodecollab.5` as the only difference, and makes the same
-+remote calls per operation; it differs in local work, in construction and in
-+redo timing (see the changelog). nodecollab.2 was an internal step and is not
-+released; nodecollab.4 is reserved.
++This section describes 0.8.2+nodecollab.6, a client upgrade on top of
++nodecollab.3 like nodecollab.5. It writes the refs, commits and payloads of
++nodecollab.3, with `runtime=0.8.2+nodecollab.6` as the only difference, and
++makes the same remote calls per operation; it differs in local work, in
++construction and in redo timing (see the changelog). nodecollab.2 was an
++internal step and is not released; nodecollab.4 is reserved.
 +
 +Construction:
 +
@@ -523,7 +583,20 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 +  of time, the client returns `STATE_CONFLICT` with nothing published.
 +- A redo moves the working copy from the lost commit to the winner's with
 +  one two-tree `read-tree`, rewriting only the files that differ; the event
-+  log's chain head is continued from the bytes already read.
++  log's chain head is continued from the bytes before the lost append, so
++  only the winner's lines are parsed.
++- After this cache publishes a state commit, writers that lost to it redo at
++  once: they read the new state after their first redo wait (at most 50 ms)
++  and land about one attempt later. A write this cache starts within those
++  50 ms is ahead of them and goes at once. One that starts later, while
++  other writers are active (someone else wrote since this cache's previous
++  commit), waits until the publishing attempt's duration plus 50 ms has
++  passed since the publish (at most 2 seconds), then fetches; started
++  earlier it would read the same state as those redos and lose to one of
++  them, often after the receive hook had already checked it. The typical
++  case is an agent that claims the next task in a new process right after
++  completing one. Reads, renewals and redos never wait, and a lone writer
++  never waits. `<cache>/git-state.published` records the last publish.
 +- After a failed or unknown push (including a timeout) the refs are read back.
 +  A state commit counts as published only when it is observed, directly or as
 +  an ancestor of the current state. An unchanged state with unchanged
@@ -642,7 +715,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 +`tests/integration/test_git_storage_compat.py` against the unchanged wheels
 +(each call is one SSH login on an SSH remote):
 +
-+| Operation | nodecollab.1 | nodecollab.2 | nodecollab.3 | nodecollab.5 |
++| Operation | nodecollab.1 | nodecollab.2 | nodecollab.3 | nodecollab.5 and .6 |
 +|-----------|-------------:|-------------:|-------------:|-------------:|
 +| Read, state unchanged | 5 | 1 | 1 | 1 (`fetch`) |
 +| Read, state changed | 5 | 2 | 1 | 1 (`fetch`) |
@@ -655,7 +728,8 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 +| Write while another process is in a transaction for 3 s | 18–48 | 8–10 | 2 | 2 |
 +
 +Through nodecollab.3, constructing `GitStorage` also synchronizes once (one
-+`fetch`); from nodecollab.5 it makes no call. The rows "with construction"
++`fetch`); from nodecollab.5 it makes no call (nodecollab.6 measured the
++same). The rows "with construction"
 +count both, for a process that constructs the storage and runs one operation.
 +
 +Throughput limit: every write still appends to one hash-chained event log on
@@ -673,15 +747,17 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 +   nodecollab.3 or later, lock-ref pushes and `TASK_RENEWED` events.
 +
 +From a center that already runs nodecollab.3, moving agents to nodecollab.5
-+needs no server change: agents can be upgraded one at a time and both
++or .6 needs no server change: agents can be upgraded one at a time and the
 +runtimes share the center. A receive hook must accept runtime markers
 +`0.8.2+nodecollab.N` with N ≥ 3 instead of one exact string; CascadeCenter-web's
 +`scripts/cascade-node-receive.py` does. Tools that require the installed
-+version to equal `0.8.2+nodecollab.3` exactly must also accept .5.
++version to equal one release exactly must accept the one agents run.
 +`tests/integration/test_git_storage_nc3_interop.py` checks the formats against
-+the nodecollab.3 wheel, mixed agents on one namespace, heartbeats renewed by
-+one runtime and honoured by the other, and this runtime's claims, renewals
-+and completions behind that guard running on nodecollab.3 with
++the nodecollab.3 wheel, mixed agents of this runtime and nodecollab.3 or .5 on
++one namespace (with and without the guard), heartbeats renewed by one runtime
++and honoured by the other, a claim renewed and completed alternately by
++nodecollab.5 and this runtime in one cache, and this runtime's claims,
++renewals and completions behind that guard running on nodecollab.3 with
 +`--require-runtime`.
 +
 +Older runtimes compute expiry from `claimed_at` only and would reclaim claims
@@ -692,7 +768,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
  
  ## CLI
  
-@@ -59,9 +248,9 @@ Run compaction on an operational cadence based on transaction volume:
+@@ -59,9 +264,9 @@ Run compaction on an operational cadence based on transaction volume:
  cascade --git-remote <remote> --namespace <namespace> compact
  ```
  
@@ -705,7 +781,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
  fetches one active commit. Archive deletion is an operator retention decision;
  do not delete an archive until its audit/backup retention period has elapsed.
  
-@@ -69,12 +258,13 @@ do not delete an archive until its audit/backup retention period has elapsed.
+@@ -69,12 +274,13 @@ do not delete an archive until its audit/backup retention period has elapsed.
  
  Treat every non-zero command as a coordination failure. Do not rerun a mutation
  blindly: first read the state ref or repeat the idempotent query. Cascade itself
@@ -723,7 +799,7 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
  CODING HTTPS are covered by the hosted acceptance test:
  
  ```bash
-@@ -98,7 +288,8 @@ and the old `slug@agent` convention are rejected before token-file access.
+@@ -98,7 +304,8 @@ and the old `slug@agent` convention are rejected before token-file access.
  Every complete/fail/release operation requires a fencing token, including the
  public `tools.execute_tool` registry; pass `agent_id`, `token` and optional
  `op_id`. Python `check`, `history`, `show`, `diff` and `snapshot_at` synchronize
@@ -733,13 +809,14 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
  
  Corruption is an error. Reads and mutations do not replay over a damaged graph,
  create an empty graph, rename evidence, or report successful recovery. A missing
-@@ -194,14 +385,28 @@ Before releasing a change to the Git backend, run:
+@@ -194,14 +401,30 @@ Before releasing a change to the Git backend, run:
  
  ```bash
  uv run pytest -q
 +CASCADE_LEGACY_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.1-py3-none-any.whl \
 +CASCADE_NODECOLLAB2_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.2-py3-none-any.whl \
 +CASCADE_NODECOLLAB3_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.3-py3-none-any.whl \
++CASCADE_NODECOLLAB5_WHEEL=/path/to/cascade_auto-0.8.2+nodecollab.5-py3-none-any.whl \
 +CASCADE_CENTER_GUARD=/path/to/CascadeCenter-web/scripts/cascade-node-receive.py \
 +  uv run pytest -q tests/integration/test_git_storage_compat.py \
 +  tests/integration/test_git_storage_nc3_interop.py
@@ -754,8 +831,9 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
 -compaction recovery. The container suite proves isolated-cache lifecycle and
 +The compatibility tests skip without the first two wheel variables; the
 +nodecollab.3 column of the call comparison is added when the third is set.
-+The interop tests skip without the nodecollab.3 wheel, and their guard cases
-+without `CASCADE_CENTER_GUARD`. A release that changes the Git protocol or its
++The interop tests skip without the nodecollab.3 wheel, their guard cases
++without `CASCADE_CENTER_GUARD` and their nodecollab.5 cases without
++`CASCADE_NODECOLLAB5_WHEEL`. A release that changes the Git protocol or its
 +call budget must run them with the previously deployed wheels and the
 +center's current guard.
 +
@@ -766,19 +844,19 @@ index eb3fa7d487e616de0a92e60baaae22e9ef169ba4..c2e7fe4c627d3682bbeb86dd41c99532
  errors. Finite `LockContentionError` results are explicit backpressure and are
  reported separately; they are never converted to success or mislabelled as
 diff --git a/pyproject.toml b/pyproject.toml
-index 7cd2eddc6a85b1b20802d84cb1326f1bd8b207f6..cb004111632a441ec77b105e1c4b1cf1b4119ec8 100644
+index 7cd2eddc6a85b1b20802d84cb1326f1bd8b207f6..0045936817747a2d00f1e35fc6d6347dab40f9a8 100644
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -1,6 +1,6 @@
  [project]
  name = "cascade-auto"
 -version = "0.8.2+nodecollab.1"
-+version = "0.8.2+nodecollab.5"
++version = "0.8.2+nodecollab.6"
  description = "An agent factory with dynamic DAG scheduling for multi-agent task coordination"
  readme = "README.md"
  license = "Apache-2.0"
 diff --git a/src/cascade/__init__.py b/src/cascade/__init__.py
-index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..208b29b708ce661c2330326e4dc4c8bf7be92ea8 100644
+index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..d95a5360d00669ea1f61300e184b61ee74a7b608 100644
 --- a/src/cascade/__init__.py
 +++ b/src/cascade/__init__.py
 @@ -14,7 +14,7 @@
@@ -786,7 +864,7 @@ index 7f334cc10afbfe047cdb137674ac3e465ac8b05e..208b29b708ce661c2330326e4dc4c8bf
  """Cascade - A DAG-based multi-agent task scheduling framework."""
  
 -__version__ = "0.8.2+nodecollab.1"
-+__version__ = "0.8.2+nodecollab.5"
++__version__ = "0.8.2+nodecollab.6"
  
  from cascade.client import CascadeClient
  from cascade.context.cancellation import CancellationToken
@@ -1943,7 +2021,7 @@ index fce97e58637608e0a77a764268074989b43cd4d9..80590065a3e497cc81742371bd9d716a
      """Raised when an operation is cancelled."""
  
 diff --git a/src/cascade/events.py b/src/cascade/events.py
-index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba10a22ea4 100644
+index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..946f3ae82ba9f3813ea2d136b94384d608b53b09 100644
 --- a/src/cascade/events.py
 +++ b/src/cascade/events.py
 @@ -24,7 +24,9 @@ object per line). It provides:
@@ -1956,7 +2034,7 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
  import time
  import uuid
  from dataclasses import dataclass, field
-@@ -150,20 +152,68 @@ class FileEventStore:
+@@ -150,20 +152,77 @@ class FileEventStore:
      are provided by EventStoreQueries and delegate to read_all().
      """
  
@@ -1964,42 +2042,51 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
 +    def __init__(self, base_dir: Path | str, *, head_file: Path | str | None = None):
          self._path = Path(base_dir) / "events.jsonl"
 -        self._last_hash: str = self._recover_last_hash()
-+        # (byte length, SHA-256, last hash) of the log as last read, kept only
-+        # when it ended at a line boundary. A later read that starts with the
-+        # same bytes parses just the lines appended since. ``head_file``
-+        # (outside the log's directory) keeps it for the next process.
-+        self._head: tuple[int, str, str] | None = None
++        # Chain heads (byte length, SHA-256, last hash) of logs this store
++        # read or wrote, newest first, each ending at a line boundary: after
++        # an append also the head before it, which is still a prefix when
++        # that append is discarded and another writer's line takes its place
++        # (a lost compare-and-swap). A read that starts with one of these
++        # prefixes parses just the lines after it. ``head_file`` (outside the
++        # log's directory) keeps them for the next process; ``None`` until
++        # loaded.
++        self._heads: list[tuple[int, str, str]] | None = None
 +        self._head_file = Path(head_file) if head_file is not None else None
 +
-+    def _load_head(self) -> tuple[int, str, str] | None:
++    def _load_heads(self) -> list[tuple[int, str, str]]:
 +        if self._head_file is None:
-+            return None
++            return []
 +        try:
 +            record = json.loads(self._head_file.read_text(encoding="utf-8"))
-+            length, digest, head_hash = record["length"], record["sha256"], record["hash"]
++            # The first nodecollab.5 build kept one head at the top level.
++            entries = record["heads"] if "heads" in record else [record]
++            heads = [(entry["length"], entry["sha256"], entry["hash"]) for entry in entries]
 +        except (OSError, ValueError, KeyError, TypeError):
-+            return None
-+        if type(length) is not int or not isinstance(digest, str) or not isinstance(head_hash, str):
-+            return None
-+        return length, digest, head_hash
-+
-+    def _keep_head(self, head: tuple[int, str, str] | None) -> None:
-+        self._head = head
-+        if self._head_file is None or head is None:
-+            return
-+        length, digest, head_hash = head
-+        tmp = self._head_file.with_name(f"{self._head_file.name}.{uuid.uuid4().hex}.tmp")
-+        tmp.write_text(
-+            json.dumps({"length": length, "sha256": digest, "hash": head_hash}), encoding="utf-8"
++            return []
++        valid = all(
++            type(length) is int and isinstance(digest, str) and isinstance(head_hash, str)
++            for length, digest, head_hash in heads
 +        )
++        return heads[:2] if valid else []
++
++    def _keep_heads(self, heads: list[tuple[int, str, str]]) -> None:
++        self._heads = heads[:2]
++        if self._head_file is None:
++            return
++        entries = [
++            {"length": length, "sha256": digest, "hash": head_hash}
++            for length, digest, head_hash in self._heads
++        ]
++        tmp = self._head_file.with_name(f"{self._head_file.name}.{uuid.uuid4().hex}.tmp")
++        tmp.write_text(json.dumps({"heads": entries}), encoding="utf-8")
 +        os.replace(tmp, self._head_file)
  
 -    def _recover_last_hash(self) -> str:
 +    def _read_head(self) -> tuple[bytes, str]:
 +        """The stored log and its chain head, read from the file every time.
 +
-+        Only lines after the bytes already read are parsed, with the same
-+        newline handling and errors as reading the whole file in text mode.
++        Only lines after a known prefix are parsed, with the same newline
++        handling and errors as reading the whole file in text mode.
 +        """
          if not self._path.exists():
 -            return ""
@@ -2010,25 +2097,25 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
 -                if line:
 -                    last_hash = json.loads(line).get("hash", "")
 -        return last_hash
-+            self._head = None
++            self._heads = []
 +            return b"", ""
 +        raw = self._path.read_bytes()
-+        if self._head is None:
-+            self._head = self._load_head()
++        if self._heads is None:
++            self._heads = self._load_heads()
 +        start, last_hash = 0, ""
-+        if self._head is not None:
-+            length, digest, head_hash = self._head
++        for length, digest, head_hash in self._heads:
 +            if len(raw) >= length and hashlib.sha256(raw[:length]).hexdigest() == digest:
 +                start, last_hash = length, head_hash
++                break
 +        for line in io.StringIO(raw[start:].decode("utf-8"), newline=None):
 +            line = line.strip()
 +            if line:
 +                last_hash = json.loads(line).get("hash", "")
 +        head = (len(raw), hashlib.sha256(raw).hexdigest(), last_hash)
 +        if not raw.endswith(b"\n"):
-+            self._head = None
-+        elif head != self._head:
-+            self._keep_head(head)
++            self._heads = []
++        elif self._heads[:1] != [head]:
++            self._keep_heads([head])
 +        return raw, last_hash
 +
 +    def _recover_last_hash(self) -> str:
@@ -2036,7 +2123,7 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
  
      def append(self, event: Event) -> None:
          self._path.parent.mkdir(parents=True, exist_ok=True)
-@@ -184,7 +234,10 @@ class FileEventStore:
+@@ -184,7 +243,10 @@ class FileEventStore:
          }
          if trace_id:
              content["trace_id"] = trace_id
@@ -2048,7 +2135,7 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
          event = Event(
              type=event_type,
              timestamp=timestamp,
-@@ -192,11 +245,13 @@ class FileEventStore:
+@@ -192,11 +254,14 @@ class FileEventStore:
              logical_ts=logical_ts,
              data=data,
              trace_id=trace_id,
@@ -2058,13 +2145,14 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
          )
          self.append(event)
 -        self._last_hash = event_hash
-+        if self._head is not None:
++        if self._heads:
 +            written = raw + (json.dumps(event.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
-+            self._keep_head((len(written), hashlib.sha256(written).hexdigest(), event_hash))
++            after = (len(written), hashlib.sha256(written).hexdigest(), event_hash)
++            self._keep_heads([after, self._heads[0]])
          return event
  
      def read_all(self) -> list[Event]:
-@@ -216,10 +271,14 @@ class FileEventStore:
+@@ -216,10 +281,14 @@ class FileEventStore:
                      ) from exc
          return events
  
@@ -2076,11 +2164,11 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
          if self._path.exists():
              self._path.unlink()
 -        self._last_hash = ""
-+        self._head = None
++        self._heads = []
  
      @property
      def count(self) -> int:
-@@ -229,34 +288,8 @@ class FileEventStore:
+@@ -229,34 +298,8 @@ class FileEventStore:
              return sum(1 for line in f if line.strip())
  
      def verify_chain(self) -> tuple[bool, str]:
@@ -2117,7 +2205,7 @@ index 501f824f6ff22abf546da40f3d797e13bc1f9ffc..6a8cf7307fee4ecd18c3fac536b051ba
  
      def read_since(self, since: float) -> list[Event]:
          return [e for e in self.read_all() if e.timestamp > since]
-@@ -297,6 +330,45 @@ class FileEventStore:
+@@ -297,6 +340,45 @@ class FileEventStore:
          return counts
  
  
@@ -2542,10 +2630,10 @@ index f5d97f6340ff96649d4faae3e7d3a3410624f2de..eeb775ba5dcff996142586398d32b0c3
      def renew(self) -> str:
          """Extend this holder's lease using CAS, refusing stale holders."""
 diff --git a/src/cascade/storage/git_storage.py b/src/cascade/storage/git_storage.py
-index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a4d4c7a89 100644
+index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..07e8af64e3bf81a251fcd993437fe540d86962c9 100644
 --- a/src/cascade/storage/git_storage.py
 +++ b/src/cascade/storage/git_storage.py
-@@ -15,32 +15,129 @@
+@@ -15,32 +15,154 @@
  """Git-backed Cascade storage for service-free cross-machine coordination.
  
  Each transaction is materialized into a dedicated local cache, executed using
@@ -2577,6 +2665,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +from collections.abc import Generator, Mapping, Sequence
  from contextlib import contextmanager
  from pathlib import Path
++from typing import NamedTuple
  
  from filelock import FileLock, Timeout
  
@@ -2626,6 +2715,30 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +# directory as Git itself does, and a pack count worth consolidating.
 +_LOOSE_SAMPLE_LIMIT = 27
 +_PACK_LIMIT = 50
++# After this cache publishes a state commit, writers that lost to it redo at
++# once: they read the new state after their first redo wait (at most 50 ms)
++# and land about one attempt later. A write this cache starts within those
++# 50 ms is ahead of them. One it starts after that but before their redos can
++# land reads the same state as they do and loses to one of them, often after
++# the receive hook already checked it, so while other writers are active it
++# waits until that much time, measured with the publishing attempt's own
++# duration (at most _YIELD_MAX seconds), has passed since the publish.
++_YIELD_MARGIN = 0.05
++_YIELD_MAX = 2.0
++
++
++class _Publish(NamedTuple):
++    """A state commit this cache published.
++
++    ``at`` is the wall time it was confirmed, ``seconds`` how long its attempt
++    took, ``others`` whether another writer had written since this cache's
++    previous publish.
++    """
++
++    oid: str
++    at: float
++    seconds: float
++    others: bool
 +
 +
 +def _refused_as_stale(result: subprocess.CompletedProcess[str], refs: int) -> bool:
@@ -2683,7 +2796,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
  
  
  class GitStorage:
-@@ -48,6 +145,12 @@ class GitStorage:
+@@ -48,6 +170,12 @@ class GitStorage:
  
      ``cache_dir`` must be local to one machine/container. Independent agents
      use independent caches and coordinate only through the remote refs.
@@ -2696,7 +2809,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
      """
  
      def __init__(
-@@ -56,8 +159,6 @@ class GitStorage:
+@@ -56,8 +184,6 @@ class GitStorage:
          *,
          namespace: str = "default",
          cache_dir: Path | str | None = None,
@@ -2705,7 +2818,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
      ) -> None:
          if not remote:
              raise ValueError("remote is required")
-@@ -71,33 +172,84 @@ class GitStorage:
+@@ -71,33 +197,85 @@ class GitStorage:
          self.remote = remote
          self.namespace = namespace
          self.cache_dir = root
@@ -2716,6 +2829,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +        self._generation_file = root / "git-state.generation"
 +        self._clean_file = root / "git-state.clean"
 +        self._events_head_file = root / "git-state.events-head"
++        self._published_file = root / "git-state.published"
          self._data_dir = self._repo_dir / "data"
          self._state_ref = f"refs/heads/cascade-state/{namespace}"
          self._cache_ref = f"refs/cascade-cache/state/{namespace}"
@@ -2806,7 +2920,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
      def _run(
          self,
          *args: str,
-@@ -122,6 +274,7 @@ class GitStorage:
+@@ -122,6 +300,7 @@ class GitStorage:
                  input=input_text,
                  capture_output=True,
                  text=True,
@@ -2814,7 +2928,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
                  env=env,
                  timeout=60,
              )
-@@ -145,11 +298,132 @@ class GitStorage:
+@@ -145,11 +324,168 @@ class GitStorage:
          self._repo_dir.mkdir(parents=True, exist_ok=True)
          if not (self._repo_dir / ".git").exists():
              self._run("init", "--quiet", str(self._repo_dir), git_dir=False)
@@ -2836,7 +2950,11 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +
 +    def _remote_ref_oid(self, ref: str) -> str | None:
 +        return self._remote_refs(ref)[ref]
-+
+ 
+-    def _remote_state_oid(self) -> str | None:
+-        result = self._run("ls-remote", self.remote, self._state_ref, git_dir=False)
+-        line = result.stdout.strip()
+-        return line.split()[0] if line else None
 +    def _observe(self) -> tuple[str | None, dict[str, str]]:
 +        """The remote state OID and heartbeat OIDs by key, from one ls-remote."""
 +        result = self._run(
@@ -2934,11 +3052,43 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +                self._run("gc", "--auto", "--quiet", check=False)
 +        except LockError:
 +            pass
- 
--    def _remote_state_oid(self) -> str | None:
--        result = self._run("ls-remote", self.remote, self._state_ref, git_dir=False)
--        line = result.stdout.strip()
--        return line.split()[0] if line else None
++
++    def _published(self) -> _Publish | None:
++        """This cache's last state publish, as recorded by :meth:`_note_publish`."""
++        try:
++            record = json.loads(self._published_file.read_text(encoding="utf-8"))
++            publish = _Publish(record["oid"], record["at"], record["seconds"], record["others"])
++        except (OSError, ValueError, KeyError, TypeError):
++            return None
++        valid = (
++            isinstance(publish.oid, str)
++            and type(publish.at) in (int, float)
++            and type(publish.seconds) in (int, float)
++            and isinstance(publish.others, bool)
++        )
++        return publish if valid else None
++
++    def _note_publish(self, commit: str, base: str | None, seconds: float) -> None:
++        """Record a publish; ``others`` when someone else wrote since the previous one."""
++        previous = self._published()
++        others = previous is None or previous.oid != base
++        record = {"oid": commit, "at": time.time(), "seconds": seconds, "others": others}
++        tmp = self._published_file.with_name(f"{self._published_file.name}.{uuid.uuid4().hex}.tmp")
++        tmp.write_text(json.dumps(record), encoding="utf-8")
++        os.replace(tmp, self._published_file)
++
++    def _yield_to_redos(self) -> None:
++        """Before a write, let writers that lost to this cache's last commit land."""
++        publish = self._published()
++        if publish is None or not publish.others:
++            return
++        elapsed = time.time() - publish.at
++        if elapsed < _YIELD_MARGIN:
++            return  # ahead of their redos (or the clock moved back)
++        wait = min(publish.seconds, _YIELD_MAX) + _YIELD_MARGIN - elapsed
++        if wait > 0:
++            time.sleep(wait)
++
 +    def _update_local_refs(self, changes: Mapping[str, str | None]) -> None:
 +        """Set (OID) or delete (None) local refs in one update-ref call."""
 +        if not changes:
@@ -2951,7 +3101,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
  
      def _clear_worktree(self) -> None:
          for child in self._repo_dir.iterdir():
-@@ -160,228 +434,605 @@ class GitStorage:
+@@ -160,228 +496,610 @@ class GitStorage:
              else:
                  child.unlink()
  
@@ -3172,7 +3322,8 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +            return False
 +        self._mark_clean(oid, token)
 +        return True
-+
+ 
+-    def _publish_state(self) -> None:
 +    def _materialize_empty(self) -> None:
 +        token = self._bump_generation()
 +        self._clear_worktree()
@@ -3181,8 +3332,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +        self._base_oid = None
 +        self._bind_file_storage()
 +        self._bound_oid = None
- 
--    def _publish_state(self) -> None:
++
 +    def _worktree_tree(self) -> str:
          # Stage from the worktree root rather than naming ``data`` directly.
 -        # A read-only operation on a brand-new namespace may enter the storage
@@ -3228,7 +3378,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +                sha256 = _SHA256_FORMAT.search(config) is not None
 +                self._empty_tree = _EMPTY_TREE_SHA256 if sha256 else _EMPTY_TREE_SHA1
 +        return self._empty_tree
-+
+ 
 +    def _worktree_matches(self, oid: str) -> bool:
 +        """Whether publishing the worktree now would reproduce ``oid``'s tree."""
 +        try:
@@ -3246,7 +3396,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +        lines.extend(details)
 +        lines.append(f"created_at={time.time()}")
 +        return "\n".join(lines) + "\n"
- 
++
 +    def _commit_state(self) -> str | None:
 +        """Commit the worktree on top of the base; ``None`` when nothing changed."""
 +        tree = self._worktree_tree()
@@ -3514,10 +3664,13 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +        ``timeout`` and ``blocking`` apply to the local cache lock.
 +        """
          local_timeout = timeout if blocking else 0
++        if blocking:
++            self._yield_to_redos()
          try:
              with self._cache_lock.acquire(timeout=local_timeout):
 -                self._lease.acquire(timeout=timeout, blocking=blocking)
 -                primary: BaseException | None = None
++                started = time.monotonic()
 +                self._sync()
 +                generation = self._bump_generation()
 +                self._clean = None
@@ -3546,7 +3699,8 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +                    yield
 +                    commit = self._commit_state()
 +                    if commit is not None:
-+                        updates: list[RefUpdate] = [(self._state_ref, commit, self._base_oid)]
++                        base = self._base_oid
++                        updates: list[RefUpdate] = [(self._state_ref, commit, base)]
 +                        updates.extend(self._staged_heartbeat_updates())
 +                        try:
 +                            self._push_refs(updates)
@@ -3556,6 +3710,7 @@ index 9ab6da040da2fb6d0ad0753f8a319b3ef683dd45..62402818aef9e2167502851d261a518a
 +                            self._mark_clean(commit, generation)
                              raise
 +                        self._record_published(commit, updates)
++                        self._note_publish(commit, base, time.monotonic() - started)
 +                    notifications = self._notifications
 +                finally:
 +                    self._open = None
@@ -4911,6 +5066,173 @@ index 0000000000000000000000000000000000000000..5a2155e086c58e2a40b019ceac3d4fb8
 +
 +if __name__ == "__main__":
 +    raise SystemExit(main())
+diff --git a/tests/acceptance/git_storage_back_to_back.py b/tests/acceptance/git_storage_back_to_back.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..dcf71ea5e00ad8669a836bcbe27d3e6c159e87cb
+--- /dev/null
++++ b/tests/acceptance/git_storage_back_to_back.py
+@@ -0,0 +1,161 @@
++#!/usr/bin/env python3
++# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Writes that follow the writer's own publish, against writes at random times.
++
++Perspective: an agent that completes a task and claims the next one at once.
++Invariant: every write lands once; the event chain stays valid.
++Goal: report compare-and-swap attempts per write for the first write of each
++pair (started at a random time) and the second (started right after the
++writer's own publish). Writers that lost to that publish redo at once, so
++without yielding the second write tends to lose to one of them.
++``--gap`` waits between the two writes of a pair, like a command-line agent
++that starts a new process for the second write (0.3 to 0.8 s at a center);
++``--hook-seconds`` adds a pre-receive hook that sleeps, like a center guard;
++``--remote-delay`` sleeps before every fetch/push like a network round trip;
++``--no-yield`` turns the runtime's yield after its own publish off.
++Migration: an explicit acceptance run; tests cover the yield deterministically.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import random
++import statistics
++import sys
++import tempfile
++from pathlib import Path
++from typing import Any
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from git_remote_kit import SRC, finish_agent, make_remote, start_agent  # noqa: E402
++from git_storage_agent_load import _delaying_git  # noqa: E402
++
++from cascade.replay import verify  # noqa: E402
++from cascade.storage.git_storage import GitStorage  # noqa: E402
++
++NAMESPACE = "pairs"
++
++
++def run(
++    agents: int,
++    pairs: int,
++    think: float,
++    gap: float,
++    delay: float,
++    hook_seconds: float,
++    runtime: Path,
++    no_yield: bool,
++    seed: int,
++) -> dict[str, Any]:
++    rng = random.Random(seed)
++    with tempfile.TemporaryDirectory(prefix="cascade-back-to-back-") as raw:
++        root = Path(raw)
++        remote = make_remote(root / "remote.git")
++        if hook_seconds > 0:
++            hook = remote / "hooks" / "pre-receive"
++            hook.write_text(f"#!/bin/sh\ncat >/dev/null\nsleep {hook_seconds}\n", encoding="utf-8")
++            hook.chmod(0o755)
++        path_prefix = _delaying_git(root / "bin", delay) if delay > 0 else None
++        processes = []
++        for index in range(agents):
++            ops: list[dict[str, Any]] = []
++            for pair in range(pairs):
++                ops.append({"op": "sleep", "seconds": rng.uniform(0, think)})
++                ops.append({"op": "add", "id": f"a{index:02d}-{pair:03d}"})
++                if gap > 0:
++                    ops.append({"op": "sleep", "seconds": gap})
++                ops.append({"op": "add", "id": f"b{index:02d}-{pair:03d}"})
++            spec = {
++                "remote": str(remote),
++                "namespace": NAMESPACE,
++                "cache": str(root / f"agent-{index:02d}"),
++                "ops": ops,
++                "no_yield": no_yield,
++            }
++            processes.append(start_agent(runtime, spec, path_prefix=path_prefix))
++        results = [finish_agent(process, timeout=1800) for process in processes]
++        items = [item for result in results for item in result["results"]]
++        report: dict[str, Any] = {
++            "runtime": results[0]["version"],
++            "yield": not no_yield,
++            "agents": agents,
++            "pairs": pairs,
++            "think_seconds": think,
++            "gap_seconds": gap,
++            "remote_delay_seconds": delay,
++            "hook_seconds": hook_seconds,
++            "failures": sum(1 for item in items if not item["success"]),
++        }
++        for kind, prefix in (("first", "a"), ("back_to_back", "b")):
++            attempts = [item["transactions"] for item in items if item["id"].startswith(prefix)]
++            report[kind] = {
++                "writes": len(attempts),
++                "attempts_mean": round(statistics.mean(attempts), 3),
++                "redone_share": round(sum(1 for value in attempts if value > 1) / len(attempts), 3),
++            }
++        storage = GitStorage(str(remote), namespace=NAMESPACE, cache_dir=root / "audit")
++        with storage.read_snapshot():
++            graph = storage.load()
++            assert graph is not None
++            report["chain_valid"] = storage.events.verify_chain()[0]
++            report["replay_matches"] = (
++                verify(storage.events.read_all(), graph, storage.content) == []
++            )
++            report["nodes"] = len(graph.nodes)
++        return report
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--agents", type=int, default=8)
++    parser.add_argument("--pairs", type=int, default=8)
++    parser.add_argument(
++        "--think", type=float, default=30.0, help="random wait bound before each pair"
++    )
++    parser.add_argument("--gap", type=float, default=0.0, help="wait between a pair's writes")
++    parser.add_argument("--remote-delay", type=float, default=0.04)
++    parser.add_argument("--hook-seconds", type=float, default=0.2)
++    parser.add_argument("--runtime", type=Path, default=SRC, help="PYTHONPATH of the agents")
++    parser.add_argument("--no-yield", action="store_true")
++    parser.add_argument("--seed", type=int, default=1)
++    args = parser.parse_args()
++    os.environ.pop("CASCADE_GIT_LOG", None)
++    report = run(
++        args.agents,
++        args.pairs,
++        args.think,
++        args.gap,
++        args.remote_delay,
++        args.hook_seconds,
++        args.runtime,
++        args.no_yield,
++        args.seed,
++    )
++    print(json.dumps(report, indent=2, sort_keys=True))
++    healthy = (
++        report["failures"] == 0
++        and report["chain_valid"]
++        and report["replay_matches"]
++        and report["nodes"] == 2 * args.agents * args.pairs
++    )
++    return 0 if healthy else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
 diff --git a/tests/acceptance/git_storage_contention_soak.py b/tests/acceptance/git_storage_contention_soak.py
 index e70fbd476d4cf6cd866f52dac323785554921d56..5d7997c0f15f71edcb64983c3ffb94ad28d0c849 100644
 --- a/tests/acceptance/git_storage_contention_soak.py
@@ -4992,10 +5314,10 @@ index db0493c3b3874fa041f2e2ba9dd74f3f5c145497..b101bab34f34ee552f19361e6b245156
              if archive_ref is not None:
 diff --git a/tests/git_remote_kit.py b/tests/git_remote_kit.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..2d0877b7d23c0d6a6dd185d64ad5d5c54e8abd78
+index 0000000000000000000000000000000000000000..f5d45d5d02e3a7121f4246cab6e255a6ef6ddb48
 --- /dev/null
 +++ b/tests/git_remote_kit.py
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,370 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -5134,6 +5456,9 @@ index 0000000000000000000000000000000000000000..2d0877b7d23c0d6a6dd185d64ad5d5c5
 +contention = tuple(spec["contention"])
 +# For example the writer identity a receive hook reads (CASCADE_WRITER_AGENT).
 +os.environ.update(spec.get("env", {}))
++if spec.get("no_yield") and hasattr(GitStorage, "_yield_to_redos"):
++    # Benchmarks compare against writes that never yield after their own publish.
++    GitStorage._yield_to_redos = lambda self: None
 +
 +
 +def storage_for(cache):
@@ -6002,7 +6327,7 @@ index ecfb305e971b19d97c6aacf508328edb79991fe1..29872f65805dd6a12168aba57a837fc1
      assert [(node.id, node.state) for node in nodes] == [("after", "READY")]
 diff --git a/tests/integration/test_git_storage_heartbeats.py b/tests/integration/test_git_storage_heartbeats.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..119d3284315c3d6ea556ae8e8820b2ed863f2fbc
+index 0000000000000000000000000000000000000000..4a152bff9a29e16f613f496d92881366610aa0cf
 --- /dev/null
 +++ b/tests/integration/test_git_storage_heartbeats.py
 @@ -0,0 +1,684 @@
@@ -6126,7 +6451,7 @@ index 0000000000000000000000000000000000000000..119d3284315c3d6ea556ae8e8820b2ed
 +        "claim_token": token,
 +        "renewed_at": first["renewed_at"],
 +        "timeout": 60.0,
-+        "runtime": "0.8.2+nodecollab.5",
++        "runtime": "0.8.2+nodecollab.6",
 +    }
 +    assert first["renewed_at"] == worker.load().nodes["task"].claimed_at
 +    state = remote_refs(remote)[STATE_REF]
@@ -6593,7 +6918,7 @@ index 0000000000000000000000000000000000000000..119d3284315c3d6ea556ae8e8820b2ed
 +        "claim_token": 3,
 +        "renewed_at": 1.5,
 +        "timeout": None,
-+        "runtime": "0.8.2+nodecollab.5",
++        "runtime": "0.8.2+nodecollab.6",
 +    }
 +    assert Heartbeat.from_payload(good).timeout is None
 +    for change in (
@@ -6692,10 +7017,10 @@ index 0000000000000000000000000000000000000000..119d3284315c3d6ea556ae8e8820b2ed
 +    )
 diff --git a/tests/integration/test_git_storage_nc3_interop.py b/tests/integration/test_git_storage_nc3_interop.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9799de5b7
+index 0000000000000000000000000000000000000000..9652164d77071dd4a0d053bd9b6393ff513008a3
 --- /dev/null
 +++ b/tests/integration/test_git_storage_nc3_interop.py
-@@ -0,0 +1,503 @@
+@@ -0,0 +1,591 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -6710,7 +7035,7 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +# See the License for the specific language governing permissions and
 +# limitations under the License.
 +
-+"""This runtime beside the released 0.8.2+nodecollab.3, and behind a center guard.
++"""This runtime beside released nodecollab.3 and .5, and behind a center guard.
 +
 +Perspective: a center whose guard and publisher run nodecollab.3 while agents
 +move to this runtime one by one.
@@ -6720,7 +7045,8 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +Goal: prove the client upgrade needs no server change.
 +Migration: needs ``CASCADE_NODECOLLAB3_WHEEL``; the guard cases also need
 +``CASCADE_CENTER_GUARD``, the path of CascadeCenter-web's
-+``scripts/cascade-node-receive.py``, which runs here on the nodecollab.3 wheel.
++``scripts/cascade-node-receive.py``, which runs here on the nodecollab.3 wheel;
++the nodecollab.5 cases need ``CASCADE_NODECOLLAB5_WHEEL``.
 +"""
 +
 +from __future__ import annotations
@@ -6751,6 +7077,7 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +from cascade.types import heartbeat_key
 +
 +NC3 = "0.8.2+nodecollab.3"
++NC5 = "0.8.2+nodecollab.5"
 +NAMESPACE = "interop"
 +STATE_REF = f"refs/heads/cascade-state/{NAMESPACE}"
 +HEARTBEAT_PREFIX = f"refs/heads/cascade-heartbeat/{NAMESPACE}/"
@@ -6765,6 +7092,14 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +    if not wheel:
 +        pytest.skip(f"set CASCADE_NODECOLLAB3_WHEEL to the {NC3} wheel")
 +    return extract_runtime(wheel, NC3, tmp_path_factory.mktemp("nodecollab-3"))
++
++
++@pytest.fixture(scope="module")
++def nc5_runtime(tmp_path_factory: pytest.TempPathFactory) -> Path:
++    wheel = os.environ.get("CASCADE_NODECOLLAB5_WHEEL")
++    if not wheel:
++        pytest.skip(f"set CASCADE_NODECOLLAB5_WHEEL to the {NC5} wheel")
++    return extract_runtime(wheel, NC5, tmp_path_factory.mktemp("nodecollab-5"))
 +
 +
 +@pytest.fixture(scope="module")
@@ -7039,13 +7374,14 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +    assert _audit(SRC, remote, tmp_path / "observer") == {"five": "READY", "three": "READY"}
 +
 +
-+def _mixed_run(
-+    remote: Path, root: Path, nc3_runtime: Path, agents: list[str]
-+) -> list[dict[str, Any]]:
-+    """Each agent claims, renews twice and completes its own task; plus one contested task."""
++def _mixed_run(remote: Path, root: Path, other: Path, agents: list[str]) -> list[dict[str, Any]]:
++    """Each agent claims, renews twice and completes its own task; plus one contested task.
++
++    Agents alternate between this runtime and ``other``.
++    """
 +    processes = []
 +    for index, agent in enumerate(agents):
-+        runtime = nc3_runtime if index % 2 else SRC
++        runtime = other if index % 2 else SRC
 +        ops = [
 +            {
 +                "op": "claim",
@@ -7073,9 +7409,13 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +    return [finish_agent(process, timeout=300) for process in processes]
 +
 +
-+@pytest.mark.parametrize("guarded", [False, True], ids=["plain-remote", "center-guard"])
-+def test_nodecollab3_and_this_runtime_share_a_center(
-+    nc3_runtime: Path, tmp_path: Path, request: pytest.FixtureRequest, guarded: bool
++def _share_a_center(
++    other: Path,
++    version: str,
++    guard_runtime: Path,
++    tmp_path: Path,
++    request: pytest.FixtureRequest,
++    guarded: bool,
 +) -> None:
 +    agents = [f"agent-{index}" for index in range(6)]
 +    remote = make_remote(tmp_path / "remote.git")
@@ -7083,27 +7423,100 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +    checkpoints = None
 +    if guarded:
 +        guard = request.getfixturevalue("center_guard")
-+        checkpoints = _install_guard(remote, guard, nc3_runtime, tmp_path, agents)
++        checkpoints = _install_guard(remote, guard, guard_runtime, tmp_path, agents)
 +
-+    results = _mixed_run(remote, tmp_path, nc3_runtime, agents)
++    results = _mixed_run(remote, tmp_path, other, agents)
 +
-+    assert {result["version"] for result in results} == {NC3, cascade.__version__}
++    assert {result["version"] for result in results} == {version, cascade.__version__}
 +    for result in results:
 +        assert all(item["success"] for item in result["results"][:4]), result
 +    contested = [result["results"][4] for result in results[:2]]
 +    assert sorted(item["success"] for item in contested) == [False, True], contested
 +    winner = agents[[item["success"] for item in contested].index(True)]
 +
-+    states = _audit(nc3_runtime, remote, tmp_path / "nc3-audit")
++    states = _audit(other, remote, tmp_path / "other-audit")
 +    assert states == {**{f"own-{index}": "COMPLETED" for index in range(6)}, "contested": "ACTIVE"}
-+    assert _audit(SRC, remote, tmp_path / "nc5-audit") == states
++    assert _audit(SRC, remote, tmp_path / "this-audit") == states
 +    assert len(_heartbeat_refs(remote)) == 1
-+    assert _runtime_markers(remote) >= {NC3, cascade.__version__}
-+    owner = _client(remote, tmp_path / "nc5-audit").check("contested").data
++    assert _runtime_markers(remote) >= {version, cascade.__version__}
++    owner = _client(remote, tmp_path / "this-audit").check("contested").data
 +    assert owner["agent_id"] == winner
 +    if checkpoints is not None:
 +        # The guard verified the pushes incrementally from saved checkpoints.
 +        assert any(checkpoints.iterdir())
++
++
++@pytest.mark.parametrize("guarded", [False, True], ids=["plain-remote", "center-guard"])
++def test_nodecollab3_and_this_runtime_share_a_center(
++    nc3_runtime: Path, tmp_path: Path, request: pytest.FixtureRequest, guarded: bool
++) -> None:
++    _share_a_center(nc3_runtime, NC3, nc3_runtime, tmp_path, request, guarded)
++
++
++@pytest.mark.parametrize("guarded", [False, True], ids=["plain-remote", "center-guard"])
++def test_nodecollab5_and_this_runtime_share_a_center(
++    nc5_runtime: Path,
++    nc3_runtime: Path,
++    tmp_path: Path,
++    request: pytest.FixtureRequest,
++    guarded: bool,
++) -> None:
++    _share_a_center(nc5_runtime, NC5, nc3_runtime, tmp_path, request, guarded)
++
++
++def test_claims_move_between_nodecollab5_and_this_runtime_in_one_cache(
++    nc5_runtime: Path, tmp_path: Path
++) -> None:
++    """An agent upgraded or rolled back mid-claim keeps renewing and completing it.
++
++    The cache's own records differ between the two (this runtime adds a
++    publish record and keeps two chain heads); each must accept the other's.
++    """
++    remote = make_remote(tmp_path / "remote.git")
++    _seed(remote, tmp_path / "seed", "claimed-by-nc5", "claimed-by-this")
++    cache = tmp_path / "agent"
++
++    def step(runtime: Path, op: dict[str, Any]) -> dict[str, Any]:
++        result = run_agent(runtime, _spec(remote, cache, [{"agent": "agent-a", **op}]))
++        item: dict[str, Any] = result["results"][0]
++        assert item["success"], result
++        return item
++
++    def renewed_by(task_id: str) -> str:
++        message = subprocess.run(
++            [
++                "git",
++                "--git-dir",
++                str(remote),
++                "show",
++                "-s",
++                "--format=%B",
++                HEARTBEAT_PREFIX + heartbeat_key(task_id),
++            ],
++            check=True,
++            capture_output=True,
++            text=True,
++        ).stdout
++        runtime: str = json.loads(message)["runtime"]
++        return runtime
++
++    for task_id, first, second in (
++        ("claimed-by-nc5", nc5_runtime, SRC),
++        ("claimed-by-this", SRC, nc5_runtime),
++    ):
++        token = step(first, {"op": "claim", "task_id": task_id, "timeout": 60})["token"]
++        held = {"task_id": task_id, "token": token}
++        step(second, {"op": "renew", **held})
++        assert renewed_by(task_id) == (NC5 if second == nc5_runtime else cascade.__version__)
++        step(first, {"op": "renew", **held})
++        assert renewed_by(task_id) == (NC5 if first == nc5_runtime else cascade.__version__)
++        step(second, {"op": "complete", **held})
++
++    expected = {"claimed-by-nc5": "COMPLETED", "claimed-by-this": "COMPLETED"}
++    assert _audit(nc5_runtime, remote, cache) == expected
++    assert _audit(SRC, remote, cache) == expected
++    assert _heartbeat_refs(remote) == []
++    assert _runtime_markers(remote) >= {NC5, cascade.__version__}
 +
 +
 +def test_this_runtime_passes_the_center_guard(
@@ -7201,10 +7614,10 @@ index 0000000000000000000000000000000000000000..26b8ba396605b1aeee711a99a6eb99a9
 +    assert any(checkpoints.iterdir())
 diff --git a/tests/integration/test_git_storage_snapshot.py b/tests/integration/test_git_storage_snapshot.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..3caceb4f283cec60e56b3656d190a285931fb89b
+index 0000000000000000000000000000000000000000..45fa317fbb400bd54e79864441dae4b0928a9650
 --- /dev/null
 +++ b/tests/integration/test_git_storage_snapshot.py
-@@ -0,0 +1,584 @@
+@@ -0,0 +1,706 @@
 +# Copyright 2026 Hangzhou Autoseek Information Technology Co., Ltd.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -7589,6 +8002,128 @@ index 0000000000000000000000000000000000000000..3caceb4f283cec60e56b3656d190a285
 +    assert [event["type"] for event in history] == ["node_added"]
 +    repeated = client.add("mine", op_id="add-mine")
 +    assert repeated.success and len(attempts) == 3
++
++
++class _RecordingTime:
++    """``time`` for git_storage with real clocks and recorded sleeps."""
++
++    def __init__(self) -> None:
++        self.sleeps: list[float] = []
++        self.time = time.time
++        self.monotonic = time.monotonic
++
++    def sleep(self, seconds: float) -> None:
++        self.sleeps.append(seconds)
++        time.sleep(seconds)
++
++
++def test_a_write_right_after_publishing_yields_to_writers_that_lost_to_it(
++    remote: Path, seeded: CascadeClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from cascade.storage import git_storage
++
++    storage = _storage(remote, tmp_path / "writer")
++    client = CascadeClient(storage)
++    other = _client(remote, tmp_path / "other")
++    assert client.add("mine-1").success
++    assert other.add("theirs").success
++    # Built on another writer's commit: losers of this publish may be redoing.
++    assert client.add("mine-2").success
++    record = tmp_path / "writer" / "git-state.published"
++    published = json.loads(record.read_text())
++    assert published["others"] is True and published["seconds"] > 0
++    # This write starts 0.2 s after the publish of an attempt that took 1 s.
++    published.update(at=time.time() - 0.2, seconds=1.0)
++    record.write_text(json.dumps(published))
++    clock = _RecordingTime()
++    monkeypatch.setattr(git_storage, "time", clock)
++
++    assert client.add("mine-3").success
++
++    assert len(clock.sleeps) == 1
++    assert 0.7 < clock.sleeps[0] <= 1.0 + git_storage._YIELD_MARGIN - 0.2
++
++
++@pytest.mark.parametrize(
++    ("elapsed", "seconds", "others", "expected"),
++    [
++        (0.01, 0.5, True, None),  # ahead of the losers' redos
++        (0.2, 0.5, True, 0.35),
++        (1.0, 0.5, True, None),  # their redos had time to land
++        (0.2, 0.5, False, None),  # nobody else was writing
++        (0.2, 10.0, True, 1.85),  # at most _YIELD_MAX
++        (-5.0, 0.5, True, None),  # clock moved back
++    ],
++)
++def test_the_yield_after_a_publish_depends_on_elapsed_time_and_other_writers(
++    tmp_path: Path,
++    monkeypatch: pytest.MonkeyPatch,
++    elapsed: float,
++    seconds: float,
++    others: bool,
++    expected: float | None,
++) -> None:
++    from cascade.storage import git_storage
++
++    storage = GitStorage("unused-remote", namespace="ns", cache_dir=tmp_path / "cache")
++    now = 1_000_000.0
++    record = {"oid": "0" * 40, "at": now - elapsed, "seconds": seconds, "others": others}
++    (tmp_path / "cache" / "git-state.published").write_text(json.dumps(record))
++    sleeps: list[float] = []
++    monkeypatch.setattr(
++        git_storage, "time", type("Clock", (), {"time": lambda: now, "sleep": sleeps.append})
++    )
++
++    storage._yield_to_redos()
++
++    assert sleeps == ([] if expected is None else [pytest.approx(expected)])
++
++
++def test_a_lone_writer_and_a_redo_never_yield(
++    remote: Path, seeded: CascadeClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from cascade.storage import git_storage
++
++    storage = _storage(remote, tmp_path / "writer")
++    client = CascadeClient(storage)
++    assert client.add("first").success
++    time.sleep(
++        json.loads((tmp_path / "writer" / "git-state.published").read_text())["seconds"] + 0.1
++    )
++    assert client.add("second").success  # its base is this cache's own commit
++    assert json.loads((tmp_path / "writer" / "git-state.published").read_text())["others"] is False
++    clock = _RecordingTime()
++    monkeypatch.setattr(git_storage, "time", clock)
++    assert client.add("third").success
++    assert clock.sleeps == []
++
++    # A redo follows a lost compare-and-swap, not a publish of this cache, so
++    # it never waits, even after a publish that had other writers around. The
++    # other writer runs in its own process; only this storage's waits count.
++    def other_add(node_id: str) -> None:
++        result = run_agent(
++            SRC, _spec(remote, tmp_path / "intruder", [{"op": "add", "id": node_id}])
++        )
++        assert result["results"][0]["success"], result
++
++    other_add("theirs")
++    assert client.add("mine").success
++    published = json.loads((tmp_path / "writer" / "git-state.published").read_text())
++    assert published["others"] is True
++    time.sleep(published["seconds"] + 0.1)
++    real_commit = storage._commit_state
++    attempts: list[int] = []
++
++    def race_then_commit() -> str | None:
++        attempts.append(1)
++        if len(attempts) == 1:
++            other_add("intruder")
++        return real_commit()
++
++    monkeypatch.setattr(storage, "_commit_state", race_then_commit)
++    clock.sleeps.clear()
++    assert client.add("fourth").success
++    assert len(attempts) == 2 and clock.sleeps == []
 +
 +
 +def _stat(path: Path) -> tuple[int, int]:
@@ -8002,10 +8537,10 @@ index bc63d38ac5c9e3fb7239180c4ea940e673e24170..a3324f2f15290d02db9a03f92dfccb9f
 +        assert "nothing was published" in result.message
 +        assert AlwaysLoses.attempts > 1
 diff --git a/tests/unit/test_events_unit.py b/tests/unit/test_events_unit.py
-index ef577e35bdac1a981f3c224f549961494e59d7c3..2eda6a2ee51fa8ad6fe7c7ad0bf80893a7ee4ca8 100644
+index ef577e35bdac1a981f3c224f549961494e59d7c3..85644c0e7216a06a850c5740f6b42eefdbe4a1af 100644
 --- a/tests/unit/test_events_unit.py
 +++ b/tests/unit/test_events_unit.py
-@@ -270,7 +270,30 @@ class TestFileEventStoreCore:
+@@ -270,7 +270,66 @@ class TestFileEventStoreCore:
      def test_recover_last_hash_empty_file(self, tmp_path: Path):
          """Recover returns empty string when file does not exist."""
          s = FileEventStore(tmp_path)
@@ -8021,6 +8556,42 @@ index ef577e35bdac1a981f3c224f549961494e59d7c3..2eda6a2ee51fa8ad6fe7c7ad0bf80893
 +        e3 = s1.emit(EventType.NODE_ADDED, logical_ts=2, node_id="c")
 +        assert e3.prev_hash == e2.hash
 +        assert s1.verify_chain()[0]
++
++    @pytest.mark.parametrize("new_process", [False, True])
++    def test_a_redo_after_a_discarded_append_parses_only_the_winners_lines(
++        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, new_process: bool
++    ):
++        """A lost compare-and-swap replaces our appended line with the winner's.
++
++        The head before our append is still a prefix, so the redo parses only
++        the winner's line, also in a new process reading the head file.
++        """
++        mine, theirs = tmp_path / "mine", tmp_path / "theirs"
++        theirs.mkdir()
++        heads = tmp_path / "heads.json"
++        store = FileEventStore(mine, head_file=heads)
++        for index in range(50):
++            store.emit(EventType.NODE_ADDED, logical_ts=index, node_id=f"n{index}")
++        (theirs / "events.jsonl").write_bytes((mine / "events.jsonl").read_bytes())
++        store.emit(EventType.NODE_ADDED, logical_ts=50, node_id="lost")
++        winner = FileEventStore(theirs).emit(EventType.NODE_ADDED, logical_ts=50, node_id="won")
++        (theirs / "events.jsonl").replace(mine / "events.jsonl")
++        if new_process:
++            store = FileEventStore(mine, head_file=heads)
++        parsed = []
++        real_loads = json.loads
++
++        def counting_loads(text: str, *args: object, **kwargs: object) -> object:
++            parsed.append(text)
++            return real_loads(text, *args, **kwargs)
++
++        monkeypatch.setattr("cascade.events.json.loads", counting_loads)
++        redo = store.emit(EventType.NODE_ADDED, logical_ts=51, node_id="redo")
++        monkeypatch.undo()
++
++        assert redo.prev_hash == winner.hash
++        assert len([text for text in parsed if '"prev_hash"' in text]) == 1
++        assert store.verify_chain()[0]
 +
 +    def test_emit_rereads_a_log_replaced_with_other_bytes(self, tmp_path: Path):
 +        """A replaced log fails the prefix digest and is parsed again in full."""
@@ -8751,7 +9322,7 @@ index 0000000000000000000000000000000000000000..018cc239447cfe150a9191a1a3b5a753
 +    with pytest.raises(ValueError, match="consumed"):
 +        checkpoint.to_dict()
 diff --git a/uv.lock b/uv.lock
-index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..76a36fca76e4d7402d9ddd337b86b3f34908179e 100644
+index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..8c46d33f8f35b99a7388965c4cdeb25ffbd4155d 100644
 --- a/uv.lock
 +++ b/uv.lock
 @@ -13,7 +13,7 @@ wheels = [
@@ -8759,7 +9330,7 @@ index f7979e4de09cd0ff3c25119100e2757b76fcc2d5..76a36fca76e4d7402d9ddd337b86b3f3
  [[package]]
  name = "cascade-auto"
 -version = "0.8.2+nodecollab.1"
-+version = "0.8.2+nodecollab.5"
++version = "0.8.2+nodecollab.6"
  source = { editable = "." }
  dependencies = [
      { name = "filelock" },
