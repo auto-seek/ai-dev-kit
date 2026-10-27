@@ -7,14 +7,18 @@
 #   ws-play [--note TEXT] [--no-shot] click X Y [BUTTON]
 #   ws-play [--note TEXT] [--no-shot] node NODE         click a UI node ($WS_PLAY_NODE)
 #   ws-play [--note TEXT] [--no-shot] key KEY...        e.g. Escape ctrl+s Page_Down
-#   ws-play [--note TEXT] [--no-shot] type TEXT
+#   ws-play [--note TEXT] [--no-shot] type TEXT          ($WS_PLAY_TYPE)
 #   ws-play [--note TEXT] [--no-shot] wait SECONDS
 #   ws-play [--note TEXT] shot [NAME]                   screenshot only
 #   ws-play [--note TEXT] summary                       describe the UI ($WS_PLAY_SUMMARY)
 # Projects provide the node and summary channel through the workstation's
 # environment: WS_PLAY_NODE is a command that clicks the node named by its last
-# argument; WS_PLAY_SUMMARY prints a text summary of the UI. Without them,
-# `node` exits 2 and `summary` lists the visible windows. Actions wait
+# argument; WS_PLAY_SUMMARY prints a text summary of the UI; WS_PLAY_TYPE, if
+# set, types the text given as its last argument through the application's own
+# input path. Without them, `node` exits 2, `summary` lists the visible windows
+# and `type` goes through xdotool, which sends only reliable ASCII: for other
+# characters it remaps a spare keycode per character, and an application that
+# keeps its own keymap (Godot does) reads the wrong ones. Actions wait
 # $WS_PLAY_SETTLE seconds (default 0.5) before the screenshot.
 # Prints the screenshot path, relative to $WS_OUT, and the summary text.
 set -euo pipefail
@@ -51,7 +55,14 @@ case $verb in
     read -r -a channel <<<"$WS_PLAY_NODE"
     "${channel[@]}" "$1" || code=$? ;;
   key) [ $# -ge 1 ] || usage; ws-input key "$@" || code=$? ;;
-  type) [ $# -eq 1 ] || usage; ws-input type "$1" || code=$? ;;
+  type)
+    [ $# -eq 1 ] || usage
+    if [ -n "${WS_PLAY_TYPE:-}" ]; then
+      read -r -a channel <<<"$WS_PLAY_TYPE"
+      "${channel[@]}" "$1" || code=$?
+    else
+      ws-input type "$1" || code=$?
+    fi ;;
   wait) [ $# -eq 1 ] && [[ $1 =~ ^[0-9]+(\.[0-9]+)?$ ]] || usage; sleep "$1"; settle=0 ;;
   shot)
     [ $# -le 1 ] || usage

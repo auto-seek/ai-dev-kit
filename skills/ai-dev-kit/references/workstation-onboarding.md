@@ -83,7 +83,7 @@ Each pool:
 | `cpus` | 3 | CPU limit per workstation; may not exceed Docker's CPUs; `LP_NUM_THREADS` follows it |
 | `memory` | `"2.5g"` | memory limit per workstation, swap included (at least `64m`) |
 | `screen` | `"1920x1080x24"` | Xvfb screen, `WxHxD` with depth 8, 16 or 24 |
-| `env` | `{}` | environment for the workstation, for example `WS_PLAY_NODE` and `WS_PLAY_SUMMARY` |
+| `env` | `{}` | environment for the workstation, for example `WS_PLAY_NODE`, `WS_PLAY_SUMMARY` and `WS_PLAY_TYPE` |
 | `mounts` | `[]` | extra bind mounts `{ "source", "target", "readonly" }`; `source` may start with `~/`, `target` is absolute |
 | `start` | required | argv every run starts with; extra run arguments follow it |
 | `user` | `"host"` | `"host"` runs as your uid and gid (files it writes stay yours); `"image"` uses the image's user |
@@ -240,8 +240,9 @@ reviews can actually run:
 1. Steps 1 to 4 work: a claim from a prepared checkout starts the program and
    evidence capture works.
 2. The reviewer's channel works: `ws-play` can reach every screen the paths
-   cover (coordinates, keys, and the project's `WS_PLAY_NODE` and
-   `WS_PLAY_SUMMARY` commands if it has them), and the rubric and specs exist.
+   cover (coordinates, keys, and the project's `WS_PLAY_NODE`,
+   `WS_PLAY_SUMMARY` and `WS_PLAY_TYPE` commands if it has them; text that is
+   not ASCII needs `WS_PLAY_TYPE`), and the rubric and specs exist.
 3. On a branch, add `player_review`, make a player-visible change, and run one
    whole review: request, a reviewer session plays and files, and
    `skill-first-gate.sh --phase merge` passes. Merge that branch afterwards.

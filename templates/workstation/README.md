@@ -89,8 +89,13 @@ For a player review, `ws-play` is the recorded player's channel: each call
 `$WS_OUT/review/steps.jsonl`. A project offers UI-node clicks and a UI summary
 by setting `WS_PLAY_NODE` (a command that clicks the node named by its last
 argument) and `WS_PLAY_SUMMARY` (a command that prints the summary) in the
-pool's `env`; without them `node` exits 2 and `summary` lists the windows. See
-`skills/ai-dev-kit/references/player-review.md`.
+pool's `env`; without them `node` exits 2 and `summary` lists the windows.
+`type` goes through xdotool, which sends ASCII reliably but not other
+characters: for those it remaps a spare keycode per character, and a program
+that keeps its own copy of the keymap (Godot does) reads the wrong ones. A
+project whose reviewers type other text sets `WS_PLAY_TYPE`, a command that
+types the text given as its last argument through the program's own input
+path. See `skills/ai-dev-kit/references/player-review.md`.
 
 `PATTERN` is matched against the title, then `WM_CLASS`. Prefer an ASCII class
 (Godot sets it to the project name): Godot stores non-ASCII titles in `WM_NAME`

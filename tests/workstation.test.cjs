@@ -259,12 +259,14 @@ test("ws-play performs each step on the private screen and records it with its s
     "ws-play summary > /ws/out/summary.txt",
     "if ws-play node start 2> /ws/out/node.err; then exit 9; fi",
     'WS_PLAY_NODE="echo pressed" ws-play node start-button > /ws/out/node.out',
+    'WS_PLAY_TYPE="echo typed" ws-play type "客官 有房" > /ws/out/type.out',
   ].join("\n");
   const result = run(out, ["--screen", "640x480x24", "--", "bash", "-c", script], ["-e", "WS_PLAY_SETTLE=0.1"]);
   assert.equal(result.status, 0, result.stderr);
   const steps = fs.readFileSync(path.join(out, "review/steps.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
   assert.deepEqual(steps.map(step => [step.n, step.verb, step.args]), [
     [1, "focus", ["Event Tester"]], [2, "key", ["a"]], [3, "click", ["50", "60"]], [4, "shot", ["after"]], [5, "summary", []], [6, "node", ["start-button"]],
+    [7, "type", ["客官 有房"]],
   ], "a node step without a channel is not recorded");
   assert.equal(steps[1].note, "press a");
   for (const step of steps.filter(step => step.shot)) {
@@ -278,6 +280,8 @@ test("ws-play performs each step on the private screen and records it with its s
   assert.match(fs.readFileSync(path.join(out, "summary.txt"), "utf8"), /Event Tester/);
   assert.match(fs.readFileSync(path.join(out, "node.err"), "utf8"), /this project provides no node channel \(WS_PLAY_NODE\)/);
   assert.match(fs.readFileSync(path.join(out, "node.out"), "utf8"), /^pressed start-button\nreview\/shots\/0006\.png$/m);
+  // The project's own input path gets the text whole, not xdotool's per-character keycode remapping.
+  assert.match(fs.readFileSync(path.join(out, "type.out"), "utf8"), /^typed 客官 有房\nreview\/shots\/0007\.png$/m);
   assert.match(fs.readFileSync(path.join(out, "xev.log"), "utf8"), /KeyPress[\s\S]*keysym 0x61, a/);
 });
 

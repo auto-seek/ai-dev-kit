@@ -8,6 +8,16 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-27
+
+### Added
+- Workstations: `ws-play type` hands the text to the project's `WS_PLAY_TYPE`
+  command when the pool's `env` sets one, and records the step as before.
+  Without it `type` still goes through xdotool, which sends ASCII reliably but
+  garbles other text in programs that keep their own keymap: in a Godot game a
+  Chinese line arrived as its first character followed by repeats of others.
+  Rebuild the workstation base image to pick up the new `ws-play`.
+
 ### Changed
 - `cascade-center-agent`: `deploy/cascade-runtime/NODE_PROVENANCE.json` now
   comes from CascadeCenter-web `47593c1` (previously `51a3e5e`). It records
