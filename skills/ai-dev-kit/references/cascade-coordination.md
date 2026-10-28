@@ -157,7 +157,17 @@ coordination:
     redis_url: ""            # redis mode; rediss:// supported
     namespace: <project>     # git/redis mode; one graph per project/epic
     min_version: ">=0.8.0"   # fresh default; existing requirements are not auto-rewritten
+    node_config: ""          # node-collaboration center: this agent's instance client.json
 ```
+
+A center on the node-collaboration runtime (the portal-managed project centers,
+nodecollab `.6` and later) refuses lock-ref pushes, so the CLI's Git lease
+cannot read it even for the gate's state check. Set `node_config` in
+`profile.local.yml` (or `AI_DEV_KIT_CASCADE_NODE_CONFIG`) to the instance
+`client.json` written by `/ai-dev-kit-cascade-init` (for example
+`~/.config/cascade-node/<instance>/client.json`); preflight and merge then read
+the branch's task through the bundled node client and do not need the CLI.
+The storage keys stay for CLI work against file, Git or Redis stores.
 
 Run `/ai-dev-kit-cascade-init` to set this up interactively (probes the
 CLI, offers install, smoke-tests the chosen storage, writes the profile).

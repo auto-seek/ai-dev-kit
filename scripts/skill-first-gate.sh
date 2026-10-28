@@ -781,11 +781,94 @@ check_cascade_version() {
   fi
 }
 
+cascade_node_config() {
+  local configured="${AI_DEV_KIT_CASCADE_NODE_CONFIG:-$(coord_value cascade.node_config)}"
+  case "$configured" in "~/"*) configured="$HOME/${configured#\~/}" ;; esac
+  printf '%s' "$configured"
+}
+
+check_cascade_task_state() {  # check_cascade_task_state <state> <node id>
+  # ACTIVE is the observed coordination state, not authentication of this
+  # process or proof of a live lease. Owners must retain and renew their token.
+  if [ "$RULE_PHASE" = "preflight" ] && [ "$1" != "ACTIVE" ]; then
+    emit_fail "cascade node '$2' is $1, not ACTIVE — claim this exact task before preflight and retain its fencing token"
+  fi
+
+  # Merge rule: finish-task carries the verification evidence and merge follows
+  # (design §3 mapping: 'merged + evidence' -> finish-task/COMPLETED). So at
+  # merge the node must already be COMPLETED; anything else means the work was
+  # not finished with evidence in the store.
+  if [ "$RULE_PHASE" = "merge" ] && [ "$1" != "COMPLETED" ]; then
+    emit_fail "cascade node '$2' is $1, not COMPLETED — finish it with evidence first: cascade get-task --agent <agent> --task '$2', then cascade finish-task --task '$2' --agent <agent> --token <fencing_token from get-task> --success --summary '<verification evidence>'. Use scripts/cascade-lane.cjs finish to resolve the shared project storage."
+  fi
+}
+
+check_cascade_node_coordination() {  # check_cascade_node_coordination <instance client.json>
+  # A center on the node-collaboration runtime refuses lock-ref pushes, so the
+  # CLI's Git-lease reads fail there even for a read; the center's node API
+  # answers instead. The branch's task is read with this agent's instance.
+  local config="$1"
+  local client="${AI_DEV_KIT_CASCADE_NODE_CLIENT:-$SCRIPT_DIR/../skills/cascade-center-agent/scripts/cascade-node-client.cjs}"
+  if [ ! -f "$config" ]; then
+    emit_fail "coordination.cascade.node_config '$config' does not exist — join the center (/ai-dev-kit-cascade-init) and point it at that instance's client.json"
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    emit_fail "Node.js unavailable — required to read the center through the node client"
+    return 0
+  fi
+
+  local branch slug
+  branch="$(git -C "$PROJECT_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  case "$branch" in dev|main|master|HEAD|"") return 0 ;; esac
+  slug="${branch#*/}"
+  case "$slug" in
+    */*)
+      emit_fail "branch '$branch' must be <owner-or-type>/<canonical-task-id> with exactly one prefix segment"
+      return 0
+      ;;
+  esac
+
+  run_supervised node --no-warnings "$client" --config "$config" thread --task "$slug"
+  if [ "$RESULT_RC" -ne 0 ]; then
+    case "$RESULT_ERR$RESULT_OUT" in
+      *"HTTP 404"*) emit_fail "no cascade node matches canonical branch slug '$slug'" ;;
+      *) emit_fail "cascade node client failed (exit $RESULT_RC) — center unreachable: ${RESULT_ERR:-$RESULT_OUT}" ;;
+    esac
+    return 0
+  fi
+
+  local state
+  state="$(printf '%s' "$RESULT_OUT" | node -e '
+    let raw = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { raw += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const state = JSON.parse(raw)?.task?.state;
+        if (typeof state === "string" && state.length > 0) process.stdout.write(state);
+      } catch { /* reported below as a missing state */ }
+    });
+  ')"
+  if [ -z "$state" ]; then
+    emit_fail "cascade node client returned no task state for '$slug'"
+    return 0
+  fi
+  check_cascade_task_state "$state" "$slug"
+}
+
 check_cascade_coordination() {
   # Replaces the markdown ledger checks when engine=cascade. Coordination is a
   # required preflight/merge input, so configuration, CLI, storage, and payload
   # failures are blocking. Stop intentionally does no coordination I/O.
   [ "$RULE_PHASE" = "preflight" ] || [ "$RULE_PHASE" = "merge" ] || return 0
+
+  local node_config
+  node_config="$(cascade_node_config)"
+  if [ -n "$node_config" ]; then
+    check_cascade_node_coordination "$node_config"
+    return 0
+  fi
 
   local storage configured
   storage="$(coord_value cascade.storage)"
@@ -867,20 +950,7 @@ check_cascade_coordination() {
   fi
   state="${match%% *}"
   node_id="${match#* }"
-
-  # ACTIVE is the observed coordination state, not authentication of this
-  # process or proof of a live lease. Owners must retain and renew their token.
-  if [ "$RULE_PHASE" = "preflight" ] && [ "$state" != "ACTIVE" ]; then
-    emit_fail "cascade node '$node_id' is $state, not ACTIVE — claim this exact task before preflight and retain its fencing token"
-  fi
-
-  # Merge rule: finish-task carries the verification evidence and merge follows
-  # (design §3 mapping: 'merged + evidence' -> finish-task/COMPLETED). So at
-  # merge the node must already be COMPLETED; anything else means the work was
-  # not finished with evidence in the store.
-  if [ "$RULE_PHASE" = "merge" ] && [ "$state" != "COMPLETED" ]; then
-    emit_fail "cascade node '$node_id' is $state, not COMPLETED — finish it with evidence first: cascade get-task --agent <agent> --task '$node_id', then cascade finish-task --task '$node_id' --agent <agent> --token <fencing_token from get-task> --success --summary '<verification evidence>'. Use scripts/cascade-lane.cjs finish to resolve the shared project storage."
-  fi
+  check_cascade_task_state "$state" "$node_id"
 }
 
 if [ "$PHASE" = "stop" ]; then

@@ -8,6 +8,20 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-28
+
+### Fixed
+
+- Gate: preflight and merge could not check coordination against a center on the
+  node-collaboration runtime. The gate read the center with `cascade list-nodes`
+  through the Git lease, and those centers refuse lock-ref pushes after the
+  runtime switch ("Lock-ref pushes are refused after the runtime switch"), so
+  every branch failed with "coordination storage unreachable". With
+  `coordination.cascade.node_config` (or `AI_DEV_KIT_CASCADE_NODE_CONFIG`)
+  naming the agent's instance `client.json`, the gate reads the branch's task
+  through the bundled node client instead and applies the same ACTIVE/COMPLETED
+  rules; the CLI is not needed on that path.
+
 ## [0.30.0] - 2026-10-28
 
 ### Added

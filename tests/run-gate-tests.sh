@@ -792,6 +792,66 @@ has "speculative abstraction"
 has "heavy defensive machinery"
 finish
 
+# === node-collaboration centers: coordination read through the node client ===
+# A center on the nodecollab runtime refuses lock-ref pushes, so the CLI's Git
+# lease cannot even read it; the gate reads the branch's task through the node
+# client named by coordination.cascade.node_config. No cascade CLI is needed.
+FAKE_NODE="$REPO_ROOT/tests/fake-cascade-node.cjs"
+node_center() {  # node_center <tasks-json> → writes an instance config and points the profile at it
+  printf '{"tasks":%s}\n' "$1" > "$PROJ/.ai-dev-kit/workflow/client.json"
+  printf '    node_config: %s\n' "$PROJ/.ai-dev-kit/workflow/client.json" >> "$PROJ/.ai-dev-kit/profile.yml"
+}
+
+start "node center: merge passes when the branch task is COMPLETED, without a cascade CLI"
+new_project ">=0.7" claude/portal-task-done
+node_center '{"portal-task-done":"COMPLETED"}'
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+hasnt "not COMPLETED"; hasnt "cascade CLI unavailable"; hasnt "coordination storage unreachable"; reached_end
+finish
+
+start "node center: merge FAILs while the branch task is ACTIVE"
+new_project ">=0.7" claude/portal-task-busy
+node_center '{"portal-task-busy":"ACTIVE"}'
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+has "cascade node 'portal-task-busy' is ACTIVE, not COMPLETED"; assert_rc 2
+finish
+
+start "node center: preflight passes an ACTIVE task and FAILs a READY one"
+new_project ">=0.7" claude/portal-task-mine
+node_center '{"portal-task-mine":"ACTIVE"}'
+run_gate preflight "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+hasnt "not ACTIVE"; reached_end
+new_project ">=0.7" claude/portal-task-open
+node_center '{"portal-task-open":"READY"}'
+run_gate preflight "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+has "is READY, not ACTIVE"; assert_rc 2
+finish
+
+start "node center: a branch with no task on the center FAILs"
+new_project ">=0.7" claude/portal-task-missing
+node_center '{}'
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+has "no cascade node matches canonical branch slug 'portal-task-missing'"; assert_rc 2
+finish
+
+start "node center: an unreachable center or a missing instance config FAILs"
+new_project ">=0.7" claude/portal-task-x
+printf '{"fail":"Center HTTP 503: unavailable"}\n' > "$PROJ/.ai-dev-kit/workflow/client.json"
+printf '    node_config: %s\n' "$PROJ/.ai-dev-kit/workflow/client.json" >> "$PROJ/.ai-dev-kit/profile.yml"
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+has "center unreachable"; has "HTTP 503"; assert_rc 2
+new_project ">=0.7" claude/portal-task-x
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CONFIG="$PROJ/.ai-dev-kit/workflow/absent.json" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+has "does not exist"; assert_rc 2
+finish
+
+start "node center: the trunk needs no task"
+new_project ">=0.7"
+node_center '{}'
+run_gate merge "$PATH_NO_CASCADE" AI_DEV_KIT_CASCADE_NODE_CLIENT="$FAKE_NODE"
+hasnt "no cascade node matches"; hasnt "center unreachable"; reached_end
+finish
+
 # ---- summary ---------------------------------------------------------------
 echo "==========================="
 printf 'PASS %d  FAIL %d\n' "$PASS" "$FAIL"
