@@ -27,6 +27,12 @@
 # characters it remaps a spare keycode per character, and an application that
 # keeps its own keymap (Godot does) reads the wrong ones. Actions wait
 # $WS_PLAY_SETTLE seconds (default 0.5) before the screenshot.
+# WS_PLAY_FREEZE and WS_PLAY_THAW, if set, are commands that stop and restart
+# the application's own clock. Every step that acts (all but focus, shot and
+# summary) thaws first and freezes again after its settle time, before the
+# screenshot, so a real-time game only runs while the reviewer acts, not while
+# the reviewer looks and decides. They apply only on the workstation; the
+# player's game keeps its clock.
 # Prints the screenshot path, relative to $WS_OUT, and the summary text.
 set -euo pipefail
 usage() { sed -n '6,20s/^#  //p' "$0" >&2; exit 2; }
@@ -50,6 +56,22 @@ id=$(printf '%04d' "$n")
 int='^[0-9]+$'
 code=0
 name=""
+
+hook() {
+  [ -n "$1" ] || return 0
+  local -a channel
+  read -r -a channel <<<"$1"
+  "${channel[@]}" >/dev/null
+}
+thawed=0
+case $verb in
+  focus|shot|summary) ;;
+  *)
+    hook "${WS_PLAY_THAW:-}" || code=$?
+    thawed=1
+    # A usage error or a failing action must not leave the clock running.
+    trap '[ "$thawed" = 0 ] || hook "${WS_PLAY_FREEZE:-}" || true' EXIT ;;
+esac
 summary=""
 settle=${WS_PLAY_SETTLE:-0.5}
 
@@ -96,8 +118,14 @@ esac
 
 file=""
 digest=""
+[ "$shot" = 1 ] && sleep "$settle"
+if [ "$thawed" = 1 ]; then
+  freeze=0
+  hook "${WS_PLAY_FREEZE:-}" || freeze=$?
+  thawed=0
+  [ "$code" != 0 ] || code=$freeze
+fi
 if [ "$shot" = 1 ]; then
-  sleep "$settle"
   file=review/shots/$id${name:+-$name}.png
   ws-shot "$out/$file"
   digest=$(sha256sum "$out/$file" | cut -d' ' -f1)

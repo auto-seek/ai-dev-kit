@@ -8,6 +8,20 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-28
+
+### Added
+
+- Workstations: `ws-play` runs the project's `WS_PLAY_THAW` command before each
+  acting step and `WS_PLAY_FREEZE` after the step's settle time, before the
+  screenshot (`focus`, `shot` and `summary` leave the clock alone; a usage error
+  or failing action still freezes it). A real-time game then runs only while
+  the reviewer acts: a player reviewer lost every fight while reading
+  screenshots, because the enemy kept attacking in the seconds between steps.
+  Rebuild the workstation base image to pick up the new `ws-play`.
+- Player review: the playing guidance explains the frozen clock and says to
+  judge pacing within a step.
+
 ## [0.29.0] - 2026-10-28
 
 ### Added

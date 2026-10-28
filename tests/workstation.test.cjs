@@ -174,6 +174,31 @@ test("ws-play holds keys and buttons, drags and scrolls, and records each step",
   assert.deepEqual(wheel.filter(e => e.type === "ButtonPress").map(e => [e.button, e.at]), [[5, [60, 70]], [5, [60, 70]]]);
 });
 
+// A reviewer that thinks between steps would otherwise lose a real-time fight while
+// deciding. The hook log records how many screenshots existed at each call, so
+// it shows the clock frozen again before the acting step's screenshot.
+test("ws-play thaws the project's clock for each acting step and freezes it before the screenshot", t => {
+  const out = outDir(t);
+  const script = [
+    "set -e",
+    String.raw`printf '#!/bin/sh\necho "$1 $(ls /ws/out/review/shots 2>/dev/null | wc -l)" >> /ws/out/hooks.log\n' > /ws/out/hook.sh`,
+    "chmod +x /ws/out/hook.sh",
+    "export WS_PLAY_FREEZE='/ws/out/hook.sh freeze' WS_PLAY_THAW='/ws/out/hook.sh thaw'",
+    "ws-play key a > /dev/null",
+    "ws-play shot only > /dev/null",
+    "ws-play summary > /dev/null",
+    "ws-play --no-shot wait 0.1 > /dev/null",
+    "if ws-play hold soon w 2> /dev/null; then exit 9; fi",
+  ].join("\n");
+  const result = run(out, ["--screen", "640x480x24", "--", "bash", "-c", script], ["-e", "WS_PLAY_SETTLE=0"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(fs.readFileSync(path.join(out, "hooks.log"), "utf8").trim().split("\n"), [
+    "thaw 0", "freeze 0", // key: frozen before its screenshot is taken
+    "thaw 2", "freeze 2", // wait; shot and summary leave the clock alone
+    "thaw 2", "freeze 2", // a usage error still freezes the clock again
+  ]);
+});
+
 test("an out-of-memory kill is reported as such, not as a timeout", t => {
   const out = outDir(t);
   const result = run(out, ["--timeout", "60", "--", "bash", "-c", "head -c 1G /dev/zero | tail > /dev/null"],

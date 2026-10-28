@@ -105,7 +105,12 @@ characters: for those it remaps a spare keycode per character, and a program
 that keeps its own copy of the keymap (Godot does) reads the wrong ones. A
 project whose reviewers type other text sets `WS_PLAY_TYPE`, a command that
 types the text given as its last argument through the program's own input
-path. See `skills/ai-dev-kit/references/player-review.md`.
+path. A real-time game sets `WS_PLAY_FREEZE` and `WS_PLAY_THAW`, commands that
+stop and restart the game's own clock: every acting step thaws it, acts,
+waits its settle time and freezes it before the screenshot, so the game runs
+only while the reviewer acts. A reviewer decides in seconds, not in frames;
+without them a fight is lost while the reviewer reads the screenshot. See
+`skills/ai-dev-kit/references/player-review.md`.
 
 `PATTERN` is matched against the title, then `WM_CLASS`. Prefer an ASCII class
 (Godot sets it to the project name): Godot stores non-ASCII titles in `WM_NAME`

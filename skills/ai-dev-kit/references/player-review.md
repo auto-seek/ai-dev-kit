@@ -231,6 +231,12 @@ only inside the claim's evidence directory.
    channel rather than the pointer; use it only to find a control, then click
    its coordinates.
 
+   When the pool sets `WS_PLAY_FREEZE` and `WS_PLAY_THAW`, the game's clock
+   stops between steps: it runs during an acting step and its settle time,
+   then freezes before the screenshot. Judge pacing and reaction windows
+   inside a step (a `hold` or `press` lasting as long as a player would), not
+   across steps; the time spent reading a screenshot does not pass in the game.
+
    Each call prints the screenshot path relative to `out`; open
    `<out>/<path>` and look at it. `summary` prints the UI summary (the
    project's node tree when it provides one, else the window list). Every step
