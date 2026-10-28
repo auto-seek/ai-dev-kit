@@ -8,6 +8,22 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-28
+
+### Added
+
+- Workstations: `ws-input` and `ws-play` hold input down. `hold SECONDS KEY...`
+  keeps keys pressed together, `keydown`/`keyup` keep them pressed across
+  calls, `press X Y SECONDS [BUTTON]` holds a mouse button, `mousedown`/`mouseup`
+  split it, `drag X1 Y1 X2 Y2 [SECONDS]` glides the left button through ten
+  points, `scroll X Y up|down [CLICKS]` turns the wheel and `ws-play move X Y`
+  hovers. Real-time games could not be played with taps alone: a player
+  reviewer's character never walked and attacks never reached anyone.
+  Rebuild the workstation base image to pick up the new `ws-input` and `ws-play`.
+- Player review: the playing guidance says to use the controls the build shows,
+  to prefer the mouse in menus and dialogs and record a step that needs an
+  unnamed key as a finding, and to use the held forms for real-time play.
+
 ## [0.28.0] - 2026-10-27
 
 ### Added

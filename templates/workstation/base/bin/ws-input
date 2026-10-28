@@ -7,16 +7,26 @@
 #   ws-input focus PATTERN               give the first matching window input focus
 #   ws-input key KEY...                  press keys, e.g. Escape ctrl+s Page_Down
 #   ws-input type TEXT                   type text
+#   ws-input hold SECONDS KEY...         press the keys together, keep them down, release
+#   ws-input keydown KEY... | keyup KEY...  press or release keys; they stay down across calls
 #   ws-input move X Y                    move the virtual pointer (screen pixels)
 #   ws-input click X Y [BUTTON]          move, then click (1 left, 2 middle, 3 right)
+#   ws-input press X Y SECONDS [BUTTON]  move, then keep the button down for SECONDS
+#   ws-input mousedown X Y [BUTTON] | mouseup [BUTTON]
+#   ws-input drag X1 Y1 X2 Y2 [SECONDS]  left button down at the start, glide to the end, release
+#   ws-input scroll X Y up|down [CLICKS] wheel clicks over a point (default 1)
+# Held keys and buttons are what real-time controls need (walk with WASD while
+# aiming, hold to attack or block, drag a slider); a tap is too short for them.
 # PATTERN is a regex tried against the title, then WM_CLASS class and instance.
 # Prefer an ASCII class: some toolkits (Godot) store non-ASCII titles in WM_NAME
 # as Latin-1, which xdotool cannot match.
 set -euo pipefail
-usage() { sed -n '6,11s/^#  //p' "$0" >&2; exit 2; }
+usage() { sed -n '6,19s/^#  //p' "$0" >&2; exit 2; }
 [ $# -ge 1 ] || usage
 verb=$1; shift
 int='^[0-9]+$'
+seconds='^[0-9]+(\.[0-9]+)?$'
+button='^[1-9]$'
 # xdotool 3.20160805 ignores --any, so try each property in turn.
 find_window() {
   local by id
@@ -51,7 +61,42 @@ case $verb in
     [ $# -eq 2 ] && [[ $1 =~ $int && $2 =~ $int ]] || usage
     xdotool mousemove --sync "$1" "$2" ;;
   click)
-    [ $# -ge 2 ] && [ $# -le 3 ] && [[ $1 =~ $int && $2 =~ $int && ${3:-1} =~ ^[1-9]$ ]] || usage
+    [ $# -ge 2 ] && [ $# -le 3 ] && [[ $1 =~ $int && $2 =~ $int && ${3:-1} =~ $button ]] || usage
     xdotool mousemove --sync "$1" "$2" click "${3:-1}" ;;
+  hold)
+    [ $# -ge 2 ] && [[ $1 =~ $seconds ]] || usage
+    hold=$1; shift
+    xdotool keydown --delay 0 "$@"
+    sleep "$hold"
+    xdotool keyup --delay 0 "$@" ;;
+  keydown|keyup)
+    [ $# -ge 1 ] || usage
+    xdotool "$verb" --delay 0 "$@" ;;
+  press)
+    [ $# -ge 3 ] && [ $# -le 4 ] && [[ $1 =~ $int && $2 =~ $int && $3 =~ $seconds && ${4:-1} =~ $button ]] || usage
+    xdotool mousemove --sync "$1" "$2" mousedown "${4:-1}"
+    sleep "$3"
+    xdotool mouseup "${4:-1}" ;;
+  mousedown)
+    [ $# -ge 2 ] && [ $# -le 3 ] && [[ $1 =~ $int && $2 =~ $int && ${3:-1} =~ $button ]] || usage
+    xdotool mousemove --sync "$1" "$2" mousedown "${3:-1}" ;;
+  mouseup)
+    [ $# -le 1 ] && [[ ${1:-1} =~ $button ]] || usage
+    xdotool mouseup "${1:-1}" ;;
+  drag)
+    [ $# -ge 4 ] && [ $# -le 5 ] && [[ $1 =~ $int && $2 =~ $int && $3 =~ $int && $4 =~ $int && ${5:-0.5} =~ $seconds ]] || usage
+    # Ten intermediate positions, so the application sees a drag rather than a jump.
+    steps=10
+    pause=$(awk -v s="${5:-0.5}" -v n="$steps" 'BEGIN { printf "%.3f", s / n }')
+    xdotool mousemove --sync "$1" "$2" mousedown 1
+    for i in $(seq 1 "$steps"); do
+      xdotool mousemove --sync $(( $1 + ($3 - $1) * i / steps )) $(( $2 + ($4 - $2) * i / steps ))
+      sleep "$pause"
+    done
+    xdotool mouseup 1 ;;
+  scroll)
+    [ $# -ge 3 ] && [ $# -le 4 ] && [[ $1 =~ $int && $2 =~ $int && $3 =~ ^(up|down)$ && ${4:-1} =~ $int ]] || usage
+    wheel=$([ "$3" = up ] && echo 4 || echo 5)
+    xdotool mousemove --sync "$1" "$2" click --repeat "${4:-1}" --delay 60 "$wheel" ;;
   *) usage ;;
 esac

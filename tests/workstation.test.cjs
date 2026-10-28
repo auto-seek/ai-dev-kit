@@ -124,6 +124,56 @@ test("injected keys and clicks reach the focused window on the private screen", 
   assert.deepEqual(pngSize(path.join(out, "screen.png")), [640, 480]);
 });
 
+// Real-time controls need input that lasts: walking is a key held down, attacking or
+// blocking a button held down, a slider a drag. Each recorded step reaches the
+// window as the same X events a player's hands would produce.
+test("ws-play holds keys and buttons, drags and scrolls, and records each step", t => {
+  const out = outDir(t);
+  const script = [
+    "set -e",
+    "xev -geometry 300x200+0+0 -event keyboard -event button -event mouse > /ws/out/xev.log &",
+    'ws-input wait "Event Tester" 10 > /dev/null',
+    'ws-input focus "Event Tester" > /dev/null',
+    "ws-play --no-shot hold 0.6 w d > /dev/null",
+    "ws-play --no-shot keydown a > /dev/null",
+    "ws-play --no-shot keyup a > /dev/null",
+    "ws-play --no-shot press 40 50 0.4 > /dev/null",
+    "ws-play --no-shot drag 20 30 120 90 0.3 > /dev/null",
+    "ws-play --no-shot scroll 60 70 down 2 > /dev/null",
+    "ws-play --no-shot move 10 10 > /dev/null",
+    "if ws-play hold soon w 2> /ws/out/usage.err; then exit 9; fi",
+    "sleep 0.5",
+  ].join("\n");
+  const result = run(out, ["--screen", "640x480x24", "--", "bash", "-c", script], ["-e", "WS_PLAY_SETTLE=0"]);
+  assert.equal(result.status, 0, result.stderr);
+  const steps = fs.readFileSync(path.join(out, "review/steps.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(steps.map(step => [step.verb, step.args, step.exit]), [
+    ["hold", ["0.6", "w", "d"], 0], ["keydown", ["a"], 0], ["keyup", ["a"], 0], ["press", ["40", "50", "0.4"], 0],
+    ["drag", ["20", "30", "120", "90", "0.3"], 0], ["scroll", ["60", "70", "down", "2"], 0], ["move", ["10", "10"], 0],
+  ], "a usage error is not recorded");
+  assert.match(fs.readFileSync(path.join(out, "usage.err"), "utf8"), /hold SECONDS KEY/);
+
+  const events = fs.readFileSync(path.join(out, "xev.log"), "utf8").split(/\n(?=\S)/).map(text => ({
+    type: text.split(" ")[0], time: Number(text.match(/time (\d+)/)?.[1]), at: text.match(/root:\((\d+),(\d+)\)/)?.slice(1).map(Number),
+    key: text.match(/keysym 0x[0-9a-f]+, (\w+)/)?.[1], button: Number(text.match(/button (\d+)/)?.[1]), state: text.match(/state (0x[0-9a-f]+)/)?.[1],
+  }));
+  const keyed = (type, key) => events.find(e => e.type === type && e.key === key);
+  for (const key of ["w", "d"]) {
+    assert.ok(keyed("KeyRelease", key).time - keyed("KeyPress", key).time >= 550, `${key} is held for the given time`);
+  }
+  assert.ok(keyed("KeyPress", "a") && keyed("KeyRelease", "a"), "keydown and keyup arrive as separate calls");
+
+  const buttons = events.filter(e => e.type === "ButtonPress" || e.type === "ButtonRelease");
+  const [press, release, dragDown, dragUp, ...wheel] = buttons;
+  assert.deepEqual([press.type, press.button, press.at], ["ButtonPress", 1, [40, 50]]);
+  assert.deepEqual([release.type, release.button], ["ButtonRelease", 1]);
+  assert.ok(release.time - press.time >= 350, "the button is held for the given time");
+  assert.deepEqual([dragDown.type, dragDown.at, dragUp.type, dragUp.at], ["ButtonPress", [20, 30], "ButtonRelease", [120, 90]]);
+  const dragged = events.filter(e => e.type === "MotionNotify" && e.time > dragDown.time && e.time < dragUp.time && e.state === "0x100");
+  assert.ok(dragged.length >= 5, `the pointer moves with the button down (${dragged.length} motions)`);
+  assert.deepEqual(wheel.filter(e => e.type === "ButtonPress").map(e => [e.button, e.at]), [[5, [60, 70]], [5, [60, 70]]]);
+});
+
 test("an out-of-memory kill is reported as such, not as a timeout", t => {
   const out = outDir(t);
   const result = run(out, ["--timeout", "60", "--", "bash", "-c", "head -c 1G /dev/zero | tail > /dev/null"],

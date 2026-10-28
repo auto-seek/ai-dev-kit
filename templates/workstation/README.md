@@ -80,11 +80,21 @@ ws-input focus PATTERN               # give it input focus (there is no window m
 ws-input key KEY...                  # e.g. Escape ctrl+s Page_Down
 ws-input type TEXT
 ws-input move X Y | click X Y [BUTTON]
+ws-input hold SECONDS KEY...         # keys held down together, e.g. hold 1.5 w d
+ws-input keydown KEY... | keyup KEY... # held across calls
+ws-input press X Y SECONDS [BUTTON]  # a mouse button held down
+ws-input mousedown X Y [BUTTON] | mouseup [BUTTON]
+ws-input drag X1 Y1 X2 Y2 [SECONDS]  # left button, gliding through ten points
+ws-input scroll X Y up|down [CLICKS]
 ```
 
+Real-time controls need the held forms: a character walks only while its key
+is down, a charged attack or a block lasts while the button is, a slider moves
+with a drag. A tap (`key`, `click`) is too short for them.
+
 For a player review, `ws-play` is the recorded player's channel: each call
-(`focus`, `click X Y`, `node NODE`, `key`, `type`, `wait`, `shot [NAME]`,
-`summary`) acts on the screen, saves a screenshot under
+(`focus`, `click X Y`, `node NODE`, `key`, the held forms above, `move`,
+`type`, `wait`, `shot [NAME]`, `summary`) acts on the screen, saves a screenshot under
 `$WS_OUT/review/shots/` and appends the step, with the screenshot's SHA-256, to
 `$WS_OUT/review/steps.jsonl`. A project offers UI-node clicks and a UI summary
 by setting `WS_PLAY_NODE` (a command that clicks the node named by its last

@@ -213,9 +213,23 @@ only inside the claim's evidence directory.
    docker exec <workstation> ws-play --note "open the shop" click 640 360
    docker exec <workstation> ws-play node shop.buy_button        # if the project provides UI nodes
    docker exec <workstation> ws-play key Escape
+   docker exec <workstation> ws-play hold 1.5 w                  # walk: keys held down
+   docker exec <workstation> ws-play press 900 500 0.8           # hold the mouse button
+   docker exec <workstation> ws-play drag 600 700 900 700        # a slider
+   docker exec <workstation> ws-play scroll 960 600 down 3
    docker exec <workstation> ws-play wait 2
    docker exec <workstation> ws-play summary
    ```
+
+   Use the controls the build shows the player. Prefer the mouse for menus and
+   dialogs; press a key there only when the screen names it, and record any
+   step that needs an unnamed key, or a key where clicking does nothing, as a
+   finding. For real-time play use the controls the screen lists (for example
+   WASD and the mouse) with the held forms: `hold` to move, `keydown`/`keyup`
+   to keep moving across several steps, `press` to hold a button. A tap is too
+   short to walk or to charge an attack. `node` clicks through the project's
+   channel rather than the pointer; use it only to find a control, then click
+   its coordinates.
 
    Each call prints the screenshot path relative to `out`; open
    `<out>/<path>` and look at it. `summary` prints the UI summary (the
