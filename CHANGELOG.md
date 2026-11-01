@@ -8,6 +8,8 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-01
+
 ### Added
 - `cascade-center-agent`: an agent can withdraw a task it published with
   `cascade-node-client.cjs withdraw --task TASK_ID --input <private JSON>`
