@@ -104,6 +104,12 @@ async function createNodeClient(config, { activeLease = false } = {}) {
       verifySource(config, meta);
       const messages = action === "complete" ? await inbox() : null;
       if (messages && messages.messages.some(m => m.taskId === input.taskId && !m.receipts.find(r => r.agentId === identity.id)?.readAt)) {
+        // The unread message may be the withdrawal notice; say so instead of asking to read it first.
+        const { record } = (await api(`tasks/${input.taskId}`)).withdrawal;
+        if (record?.state === "withdrawn" && record.tasks.some(task => task.id === input.taskId)) {
+          const origin = record.taskId === input.taskId ? "" : `（随上游任务 ${record.taskId} 一起撤回）`;
+          return { success: false, code: "TASK_WITHDRAWN", message: `任务 ${input.taskId} 已撤回${origin}，原因：${record.reason}。本次领取已作废：续租、完成和释放都会被拒绝，已做的工作不会被接收。请停止工作，不要提交结果。`, withdrawal: record, inbox: messages };
+        }
         return { success: false, code: "UNREAD_NODE_MESSAGES", message: "Read and explicitly acknowledge pending node messages before completing", inbox: messages };
       }
       const result = await native(config, { ...input, action, agent: identity.id, tier: identity.tier });
@@ -122,7 +128,7 @@ async function createNodeClient(config, { activeLease = false } = {}) {
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries(["config", "task", "input", "cursor", "harness"].map(k => [k, { type: "string" }])) });
   const [command] = positionals;
-  if (positionals.length !== 1 || !["inbox", "read", "thread", "follow", "message", "publish", "goal", "workflows", "workflow", "question", "plan", "confirm", "retry", "claim", "renew", "complete", "release", "profile", "owner-code"].includes(command)) throw new Error("Usage: cascade-node-client.cjs --config FILE inbox|read|thread|follow|message|publish|goal|workflows|workflow|question|plan|confirm|retry|claim|renew|complete|release|owner-code [--task ID] [--input JSON_FILE], or profile --harness NAME");
+  if (positionals.length !== 1 || !["inbox", "read", "thread", "follow", "message", "publish", "goal", "workflows", "workflow", "question", "plan", "confirm", "retry", "claim", "renew", "complete", "release", "withdraw", "profile", "owner-code"].includes(command)) throw new Error("Usage: cascade-node-client.cjs --config FILE inbox|read|thread|follow|message|publish|goal|workflows|workflow|question|plan|confirm|retry|claim|renew|complete|release|withdraw|owner-code [--task ID] [--input JSON_FILE], or profile --harness NAME");
   const client = await createNodeClient(JSON.parse(await fs.readFile(values.config, "utf8")), { activeLease: ["renew", "release"].includes(command) });
   const input = values.input ? JSON.parse(await fs.readFile(values.input, "utf8")) : {};
   let result;
@@ -144,9 +150,11 @@ async function main() {
   else if (command === "publish") result = await client.api("publications", input);
   else if (command === "profile") result = await client.api("agent-profile", { harness: values.harness });
   else if (command === "owner-code") result = await client.api("owner-code", {});
-  else if (["follow", "message"].includes(command)) {
+  else if (["follow", "message", "withdraw"].includes(command)) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(values.task || "")) throw new Error("A valid task ID is required");
-    result = await client.api(`tasks/${values.task}/${command === "follow" ? "follow" : "messages"}`, input);
+    // A key derived from task and reason makes an uncertain retry return the same withdrawal.
+    if (command === "withdraw") result = await client.api(`tasks/${values.task}/withdraw`, { reason: input.reason, idempotencyKey: input.idempotencyKey ?? `withdraw-${digest([values.task, input.reason ?? ""]).slice(0, 32)}` });
+    else result = await client.api(`tasks/${values.task}/${command === "follow" ? "follow" : "messages"}`, input);
   } else result = await client.execute(command, { ...input, ...(values.task ? { taskId: values.task } : {}) });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (result.success === false) process.exitCode = 2;

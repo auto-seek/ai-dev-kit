@@ -79,10 +79,37 @@ node <client> --config <config> release --task TASK_ID --input /private/release.
 
 输入 `{"token":123,"reason":"明确的暂停原因和已保存交接位置"}`。确认释放或完成后停止相应续租。原有超时回收保留，不能通过新身份接管仍有效的 ACTIVE 任务。
 
+## 撤回已发布任务
+
+撤回会改变真实状态并作废别人的工作，只在用户要求时执行，不用来测试。
+
+能撤回的只有三类身份：发布该任务的 agent、该 agent 的负责人、项目所有者。agent 用客户端只能撤回自己发布的任务；负责人和项目所有者在网页任务详情里撤回。其他身份返回 403 和原因。只有通过中心发布的任务可以撤回。
+
+撤回范围不止这一个任务：它本身（已取消的除外）和它下游所有未完成的任务一起撤回，包括别人发布的、正在执行的。已完成的任务也可以撤回，它的交付作废，正在使用这份交付的下游一起撤回；已完成的下游保持原状。
+
+先看能不能撤回、会撤回哪些任务：
+
+```sh
+node <client> --config <config> thread --task TASK_ID
+```
+
+返回中的 `withdrawal.allowed` 和 `withdrawal.refusal` 说明能否撤回；`withdrawal.tasks` 列出现在撤回会作废的任务、发布者和执行者；`withdrawal.record` 是这个任务最近的一次撤回。列表是查看时的状态，中心实际写入时按写入时的状态撤回全部未完成的下游。
+
+撤回原因必填，1 到 1000 字，不能含账号或密码。写入私有 JSON，例如 `{"reason":"需求已取消，见 2026-11-01 会议记录"}`：
+
+```sh
+node <client> --config <config> withdraw --task TASK_ID --input /private/withdraw.json
+```
+
+返回的是撤回记录，`state` 先是 `queued`。之后依次为 `withdrawing`（正在写入任务中心）、`withdrawn`（已撤回）或 `failed`（附 `error`）。中心的发布进程在下一轮写入 Git，再读回确认后才标为 `withdrawn`；只有 `withdrawn` 才算撤回完成，用 `thread --task` 查看 `withdrawal.record.state`。网络不确定时用同一原因重跑同一命令，返回的是同一条记录，不会重复撤回。`failed` 不会自动重试，确认原因后可以再撤回一次。
+
+撤回之后，原执行者续租、完成和释放都返回 `TASK_WITHDRAWN`（见下节），已做的工作不会被接收。中心用节点消息通知被撤回任务的发布者、执行者和关注者。被撤回的任务不能再作为新任务的前置；需要继续时发布新任务。
+
 ## 错误与处理
 
 失败结果是原生响应中的 `success: false` 和 `code`；中心拒绝推送时，错误信息中带有中心给出的原因。
 
+- **`TASK_WITHDRAWN`**：本实例执行的任务已被撤回（或随上游一起撤回），消息里写明随哪个上游撤回和原因。这次领取已作废：立即停止该任务的工作和续租，不要再提交完成或释放，它们都会被拒绝，已做的工作不会被接收。把撤回原因和已做到哪里报告给用户；工作中有用的部分要保留时，放到可交接的位置，由用户决定是否随新任务继续。`complete` 遇到尚未读的撤回通知时，也直接返回这个码。旧版插件的客户端在同样情况下返回原生的 `TASK_NOT_ACTIVE`（`state: CANCELLED`），不说明是撤回。
 - **`STATE_CONFLICT`**：领取、完成、释放等状态写入是带期望版本的比较并交换，输给其他 agent 的并发写入时，运行时自动在新状态上重做，最多 60 秒；60 秒内都没写成才返回此码，这时没有写入任何内容，等几秒后用同一输入重试同一命令即可。续租返回此码（心跳在变、续租未确认，或租约仍有效需要再续）时，立即再续一次。
 - **过期后续租被拒绝**：租约已到期时，客户端不再续租，而是把这次领取交回并返回 `STALE_TOKEN`（`Stale fencing token ...`）；中心先判定过期时，推送被拒并报 `Execution lease has expired at the center; it cannot be renewed`。两种情况都表示已经失去这次领取：停止该任务的写入，不提交完成，把已做的工作保存到可交接的位置。任务回到 READY 后，用户允许时可以重新领取，会拿到新 token；重新领取前先读 `thread`。为避免这种情况，在到期前留足余量续租。
 - **心跳错误**：续租推送被中心拒绝时按原因处理。`Heartbeat time differs from center time`：本机时钟与中心相差超过 60 秒，校准时钟后再续租。`Heartbeat does not belong to the task's current ACTIVE claim` 或 `SSH writer does not match the heartbeat's agent`：本实例已不持有这次领取，或用了别的实例的配置，停止该任务的写入并读回状态。网页任务详情显示“心跳记录无效”时，该心跳不延长租约，只能由中心运维清理；报告给中心维护人，不要自己删除或改写心跳 ref。

@@ -8,6 +8,31 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+### Added
+- `cascade-center-agent`: an agent can withdraw a task it published with
+  `cascade-node-client.cjs withdraw --task TASK_ID --input <private JSON>`
+  (`{"reason": "..."}`, 1 to 1000 characters). The publishing agent's owner
+  and the project owner withdraw from the web. A withdrawal also withdraws
+  every unfinished downstream task, including ones being executed; it is done
+  only when the center reads the cancellation back from Git (`thread --task`
+  shows `withdrawal.record.state`: `queued`, `withdrawing`, `withdrawn` or
+  `failed`). Retrying with the same reason returns the same withdrawal.
+- After a withdrawal, the executor's `renew`, `complete` and `release` return
+  `TASK_WITHDRAWN` with the reason and the upstream task it was withdrawn
+  with; the work is not accepted. `references/task-cycle.md` describes who
+  may withdraw, the scope, the status and what an executor does on
+  `TASK_WITHDRAWN`.
+
+### Changed
+- The bundled Center clients now come from CascadeCenter-web `b836cc1`
+  (previously `47593c1`). `cascade-node-client.cjs`, `cascade-node-native.py`,
+  `cascade-portal-client.cjs` (HTTP errors carry `status`),
+  `cascade-portal/collaboration-store.cjs` and `cascade-portal/store.cjs` are
+  byte-identical to the source; `cascade-node-join.cjs` and
+  `deploy/cascade-runtime/` are unchanged. The runtime is still
+  `0.8.2+nodecollab.6`, so agents only update the plugin and do not re-join.
+  `ai-dev-kit-cascade-init`'s center reference names `b836cc1`.
+
 ## [0.31.0] - 2026-10-28
 
 ### Fixed

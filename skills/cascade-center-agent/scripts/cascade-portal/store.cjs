@@ -45,7 +45,7 @@ function createStore(filename) {
   const db = new DatabaseSync(filename, { timeout: 5000 });
   db.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
   const version = db.prepare("PRAGMA user_version").get().user_version;
-  if (![0, 1, 2, 3, 4, 5].includes(version)) { db.close(); throw new Error("Unsupported portal database version"); }
+  if (![0, 1, 2, 3, 4, 5, 6].includes(version)) { db.close(); throw new Error("Unsupported portal database version"); }
   if (!version) db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE requests (id TEXT PRIMARY KEY, author TEXT NOT NULL, description TEXT NOT NULL,
       state TEXT NOT NULL, version INTEGER NOT NULL, proposal TEXT, dispatch TEXT,
@@ -90,6 +90,15 @@ function createStore(filename) {
   if (db.prepare("PRAGMA user_version").get().user_version === 4) db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE agent_reports(agent_id TEXT PRIMARY KEY, harness TEXT NOT NULL, reported_at TEXT NOT NULL);
     PRAGMA user_version=5; COMMIT;`);
+  // Withdrawal requests; the collaboration store reads and writes them.
+  if (db.prepare("PRAGMA user_version").get().user_version === 5) db.exec(`BEGIN IMMEDIATE;
+    CREATE TABLE task_withdrawals(id TEXT PRIMARY KEY, center_id TEXT NOT NULL, task_id TEXT NOT NULL,
+      author TEXT NOT NULL, reason TEXT NOT NULL, preview TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('queued','withdrawing','withdrawn','failed')),
+      tasks TEXT, revision TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      withdrawn_at TEXT, dedupe TEXT NOT NULL, UNIQUE(center_id,author,dedupe));
+    CREATE INDEX task_withdrawals_task ON task_withdrawals(center_id,task_id,created_at);
+    PRAGMA user_version=6; COMMIT;`);
   const agents = {
     report(agentId, input) {
       exact(input, ["harness"]);

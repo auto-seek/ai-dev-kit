@@ -50,6 +50,23 @@ function collaborationStore(db, { fail, text, exact, canonical, digest }) {
     taskId: row.task_id, state: row.state, createdAt: row.created_at, updatedAt: row.updated_at,
     publishedAt: row.published_at, revision: row.revision, error: row.error }) : fail(404, "发布记录不存在");
   const getPublication = (center, publicationId) => publication(db.prepare("SELECT * FROM task_publications WHERE center_id=? AND id=?").get(center, publicationId));
+  const withdrawal = row => row ? ({ id: row.id, centerId: row.center_id, taskId: row.task_id, author: row.author,
+    reason: row.reason, preview: JSON.parse(row.preview).tasks, state: row.state, tasks: row.tasks ? JSON.parse(row.tasks) : null,
+    revision: row.revision, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, withdrawnAt: row.withdrawn_at }) : fail(404, "撤回记录不存在");
+  const getWithdrawal = (center, withdrawalId) => withdrawal(db.prepare("SELECT * FROM task_withdrawals WHERE center_id=? AND id=?").get(center, withdrawalId));
+  // Inserts one message for its recipients inside the caller's transaction.
+  const deliver = (center, task, author, body, target, dedupe, recipients) => {
+    const messageId = randomUUID();
+    db.prepare("INSERT INTO node_messages(id,center_id,task_id,author,body,target,created_at,dedupe) VALUES(?,?,?,?,?,?,?,?)").run(messageId, center, task, author, body, target, now(), dedupe);
+    for (const recipient of recipients) db.prepare("INSERT INTO node_receipts VALUES(?,?,NULL,NULL)").run(messageId, recipient);
+    audit(author, "node.message", `${center}/${task}`, { messageId, recipients });
+    return messageId;
+  };
+  const withdrawalNotice = (record, task, root) => [
+    task.id === record.taskId ? "此任务已撤回。" : `上游任务“${root?.title ?? record.taskId}”（${record.taskId}）已撤回，此任务随之撤回。`,
+    `原因：${record.reason}`,
+    ...(task.executor ? [`执行者 ${task.executor} 的本次领取已作废：续租、完成和释放都会被拒绝，已做的工作不会被接收。请停止工作，不要提交结果。`] : []),
+    "如需继续，请发布新任务。"].join("\n");
   function validateBrief(input) {
     exact(input, ["title", "goal", "context", "acceptance", "baseline", "requiredTier", "dependencies", "group"]);
     if (!["lite", "pro", "max"].includes(input.requiredTier)) fail(400, "最低模型层级无效");
@@ -95,10 +112,7 @@ function collaborationStore(db, { fail, text, exact, canonical, digest }) {
         }
         const recipients = [...new Set([...followers(center, task), ...(target ? [target] : []), ...(owner ? [owner] : [])])];
         if (!recipients.length) fail(409, "节点没有执行者或关注者，请指定接收 agent");
-        const messageId = randomUUID();
-        db.prepare("INSERT INTO node_messages(id,center_id,task_id,author,body,target,created_at,dedupe) VALUES(?,?,?,?,?,?,?,?)").run(messageId, center, task, author, body, target, now(), key);
-        for (const recipient of recipients) db.prepare("INSERT INTO node_receipts VALUES(?,?,NULL,NULL)").run(messageId, recipient);
-        audit(author, "node.message", `${center}/${task}`, { messageId, recipients });
+        const messageId = deliver(center, task, author, body, target, key, recipients);
         return message(db.prepare("SELECT * FROM node_messages WHERE id=?").get(messageId));
       });
     },
@@ -144,6 +158,67 @@ function collaborationStore(db, { fail, text, exact, canonical, digest }) {
     },
     publications(center, pendingOnly = false) {
       return db.prepare(`SELECT * FROM task_publications WHERE center_id=? ${pendingOnly ? "AND workflow_id IS NULL AND state IN ('queued','publishing')" : ""} ORDER BY created_at ${pendingOnly ? "ASC" : "DESC"} LIMIT 100`).all(center).map(publication);
+    },
+    getWithdrawal,
+    // The withdrawal that withdrew this task, else the latest that names it as its root or would cover it.
+    taskWithdrawal(center, taskId) {
+      const row = db.prepare(`SELECT w.* FROM task_withdrawals w WHERE w.center_id=? AND (w.task_id=? OR EXISTS(
+        SELECT 1 FROM json_each(COALESCE(w.tasks, json_extract(w.preview,'$.tasks'))) j WHERE json_extract(j.value,'$.id')=?))
+        ORDER BY w.state='withdrawn' DESC, w.created_at DESC, w.rowid DESC LIMIT 1`).get(center, taskId, taskId);
+      return row ? withdrawal(row) : null;
+    },
+    withdrawals(center, pendingOnly = false) {
+      return db.prepare(`SELECT * FROM task_withdrawals WHERE center_id=? ${pendingOnly ? "AND state IN ('queued','withdrawing')" : ""} ORDER BY created_at ${pendingOnly ? "ASC" : "DESC"}, rowid ${pendingOnly ? "ASC" : "DESC"} LIMIT 100`).all(center).map(withdrawal);
+    },
+    // preview lists the tasks the request would cancel when it was made; the
+    // publisher cancels the unfinished downstream it finds when it runs.
+    createWithdrawal(center, author, taskId, input, { cancelled, preview }) {
+      id(center); id(taskId); exact(input, ["reason", "idempotencyKey"]);
+      const reason = text(input.reason, "撤回原因", 1000), key = text(input.idempotencyKey, "幂等键", 100);
+      if (/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s"\\]+@/.test(reason)) fail(400, "撤回原因不能包含账号或密码");
+      return tx(() => {
+        const old = db.prepare("SELECT * FROM task_withdrawals WHERE center_id=? AND author=? AND dedupe=?").get(center, author, key);
+        if (old) {
+          if (old.task_id !== taskId || old.reason !== reason) fail(409, "重复撤回键对应不同请求");
+          return withdrawal(old);
+        }
+        // A task has one withdrawal under way or done; another request returns it. Only a failed one can be requested again.
+        const current = db.prepare("SELECT * FROM task_withdrawals WHERE center_id=? AND task_id=? AND state<>'failed' ORDER BY created_at DESC LIMIT 1").get(center, taskId);
+        if (current) return withdrawal(current);
+        if (cancelled) fail(409, "任务已撤回或已取消");
+        const withdrawalId = randomUUID(), at = now();
+        db.prepare("INSERT INTO task_withdrawals(id,center_id,task_id,author,reason,preview,state,tasks,revision,error,created_at,updated_at,withdrawn_at,dedupe) VALUES(?,?,?,?,?,?,'queued',NULL,NULL,NULL,?,?,NULL,?)")
+          .run(withdrawalId, center, taskId, author, reason, canonical({ tasks: preview }), at, at, key);
+        audit(author, "node.withdrawal.queued", `${center}/${taskId}`, { withdrawalId, reason, tasks: preview.map(t => t.id) });
+        return getWithdrawal(center, withdrawalId);
+      });
+    },
+    // verified holds the tasks a fresh Git read shows cancelled by this withdrawal.
+    updateWithdrawal(center, withdrawalId, input, verified = null) {
+      exact(input, ["state", "error"]);
+      if (!["withdrawing", "withdrawn", "failed"].includes(input.state)) fail(400, "撤回状态无效");
+      const error = input.state === "failed" ? text(input.error, "撤回错误", 4000) : null;
+      return tx(() => {
+        const old = getWithdrawal(center, withdrawalId);
+        if (old.state === "withdrawn") {
+          if (input.state !== "withdrawn") fail(409, "已撤回的记录不可覆盖");
+          return old;
+        }
+        if (old.state === "failed") fail(409, "撤回已失败，不会自动重试；有权限的成员或 agent 可以重新发起");
+        if (input.state === "withdrawn" && !verified) fail(409, "缺少 Git 读回确认");
+        const at = now();
+        db.prepare("UPDATE task_withdrawals SET state=?,updated_at=?,tasks=?,revision=?,withdrawn_at=?,error=? WHERE id=? AND center_id=?")
+          .run(input.state, at, verified ? canonical(verified.tasks) : null, verified?.revision ?? null, verified ? at : null, error, withdrawalId, center);
+        const notified = [];
+        for (const task of verified?.tasks ?? []) {
+          const recipients = [...new Set([...followers(center, task.id), task.publisher, task.executor].filter(Boolean))];
+          if (!recipients.length) continue;
+          deliver(center, task.id, old.author, withdrawalNotice(old, task, verified.tasks.find(t => t.id === old.taskId)), null, `withdrawal:${withdrawalId}:${task.id}`, recipients);
+          notified.push(task.id);
+        }
+        audit("publisher", `node.withdrawal.${input.state}`, `${center}/${old.taskId}`, { withdrawalId, error, verified, notified });
+        return getWithdrawal(center, withdrawalId);
+      });
     },
     updatePublication(center, publicationId, input, verified = null) {
       exact(input, ["state", "error"]);

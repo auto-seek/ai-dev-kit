@@ -51,7 +51,7 @@ async function createClient(config) {
       body: body === undefined ? undefined : JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(65000),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(`Center HTTP ${response.status}: ${result.error || "request failed"}`);
+    if (!response.ok) throw Object.assign(new Error(`Center HTTP ${response.status}: ${result.error || "request failed"}`), { status: response.status });
     return result;
   };
   return {

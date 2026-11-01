@@ -188,6 +188,13 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `tests/cascade-center-config.test.cjs` uses the .6 wheel; `npm run build`, skill validation, the Center SSH admission run, gitleaks and an internal-address grep pass.
 - [x] Version bump in all three manifests and the release, done by the kit maintainer after review, once the center server runs .6 (0.27.0; the center switched on 2026-10-27).
 
+## center-withdraw
+
+- [x] Package the CascadeCenter-web `b836cc1` client: `cascade-node-client.cjs` (`withdraw`, `TASK_WITHDRAWN` on `complete`), `cascade-node-native.py` (`TASK_WITHDRAWN` on renew, complete and release), `cascade-portal-client.cjs`, `cascade-portal/collaboration-store.cjs` and `cascade-portal/store.cjs` byte-identical; `cascade-node-join.cjs` keeps the kit's change and is unchanged upstream; `deploy/cascade-runtime/` unchanged (.6).
+- [x] `references/task-cycle.md` describes who may withdraw, the downstream scope, the reason, the status until the center's Git readback, and what an executor does on `TASK_WITHDRAWN`; `SKILL.md` says agents on .6 only update the plugin.
+- [x] `npm run build`, skill validation, gitleaks, an internal-address grep and the Center withdrawal tests (`tests/cascade-node.test.cjs`, with the packaged scripts) pass.
+- [ ] Version bump in all three manifests and the release, done by the kit maintainer after review.
+
 ## workstation-pool
 
 - [x] `templates/workstation/` provides the generic Linux workstation image (Xvfb, `ws-run` batch/session entry with process-group timeout and `ws-run.json`, `ws-shot`, `ws-input`) and a Godot .NET example layer with official SHA512-checked downloads; `tests/workstation.test.cjs` covers the entry with real containers.

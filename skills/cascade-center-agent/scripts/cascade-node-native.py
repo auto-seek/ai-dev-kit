@@ -19,6 +19,79 @@ spec.loader.exec_module(publisher)
 require = publisher.require
 
 
+def withdraw(client, request):
+    """Cancel a task and every unfinished task downstream of it in one state write.
+
+    Each task gets its own node_cancelled event, because the receive guard refuses an
+    event that changes any task but its own. A cancelled claim leaves the ACTIVE
+    claims, so the write deletes its heartbeat in the same atomic push. The event
+    reason starts with the withdrawal ID; the center's readback looks for it.
+    """
+    from cascade.core.state import NodeState
+    from cascade.events import EventType
+    from cascade.types import ErrorCode, Result
+
+    withdrawal = request.get("withdrawal")
+    publisher.exact(withdrawal, ["id", "taskId", "reason", "author"], "withdrawal")
+    require(re.fullmatch(r"[a-f0-9-]{36}", withdrawal["id"] or ""), "Invalid withdrawal ID")
+    root = withdrawal["taskId"]; publisher.node_id(root)
+    publisher.text(withdrawal["reason"], "withdrawal reason", 1000)
+    publisher.text(withdrawal["author"], "withdrawal author", 210)
+    resume = request.get("resume", False)
+    require(type(resume) is bool, "Invalid resume flag")
+    reason = f"Withdrawal {withdrawal['id']}: {withdrawal['reason']}"
+    # Who asked is recorded beside the reason so that executors and readers see it in Git.
+    detail = {"id": withdrawal["id"], "task_id": root, "requested_by": withdrawal["author"]}
+
+    def body(tx):
+        graph = tx.graph
+        node = graph.nodes.get(root)
+        if node is None:
+            return Result(success=False, message=f"Task {root} not found", code=ErrorCode.TASK_NOT_FOUND)
+        # Only a resumed round accepts a root it may already have cancelled; the center's
+        # readback then checks that this withdrawal wrote that cancellation.
+        if node.state == NodeState.CANCELLED and not resume:
+            return Result(success=False, message=f"Task {root} was already cancelled before this withdrawal ran", code=ErrorCode.TASK_TERMINAL)
+        order, seen = [root], {root}
+        for current in order:
+            for child in sorted(graph.get_dependents(current), key=lambda n: n.id):
+                if child.id not in seen:
+                    seen.add(child.id); order.append(child.id)
+        cancelled = []
+        for task_id in order:
+            target = graph.nodes[task_id]
+            if target.state == NodeState.CANCELLED or (task_id != root and target.state == NodeState.COMPLETED):
+                continue
+            cancelled.append({"task_id": task_id, "state": target.state.name,
+                              "executor": target.agent_id if target.state == NodeState.ACTIVE else None})
+            target.update_state(NodeState.CANCELLED)
+            tx.emit(EventType.NODE_CANCELLED, node_id=task_id, reason=reason, withdrawal=detail)
+        return tx.ok(Result(success=True, message=f"Withdrew {len(cancelled)} task(s)",
+                            data={"withdrawal_id": withdrawal["id"], "task_id": root, "cancelled": cancelled}))
+
+    return client._transact(body)
+
+
+def withdrawn_claim(storage, task_id, result):
+    """A refusal that names the withdrawal, when a claim failed because its task was withdrawn."""
+    from cascade.events import EventType
+
+    if result.get("success") or result.get("code") != "TASK_NOT_ACTIVE" or (result.get("data") or {}).get("state") != "CANCELLED":
+        return result
+    with storage.read_snapshot():
+        events = storage.events.read_all()
+    event = next((e for e in reversed(events) if e.type == EventType.NODE_CANCELLED and e.data.get("node_id") == task_id), None)
+    detail = event and event.data.get("withdrawal")
+    if not isinstance(detail, dict):
+        return result
+    root = detail.get("task_id")
+    origin = "" if root == task_id else f"（随上游任务 {root} 一起撤回）"
+    reason = str(event.data.get("reason", "")).removeprefix(f"Withdrawal {detail.get('id')}: ")
+    return {"success": False, "code": "TASK_WITHDRAWN",
+            "message": f"任务 {task_id} 已撤回{origin}，原因：{reason}。本次领取已作废：续租、完成和释放都会被拒绝，已做的工作不会被接收。请停止工作，不要提交结果。",
+            "data": {"task_id": task_id, "withdrawal": detail, "withdrawn_at": event.timestamp}}
+
+
 def execute(args):
     require(importlib.metadata.version("cascade-auto") == publisher.NODE_RUNTIME, f"Use the checksum-verified Cascade {publisher.NODE_RUNTIME} runtime")
     require(args.cache_dir.is_absolute(), "An absolute private cache directory is required")
@@ -44,8 +117,15 @@ def execute(args):
         publisher.node_id(request.get("agent")); publisher.node_id(request.get("taskId"))
         token = request.get("token")
         require(type(token) is int and token > 0, "A positive fencing token is required")
-        return client.renew(request["taskId"], agent_id=request["agent"], token=token).to_dict()
+        return withdrawn_claim(storage, request["taskId"], client.renew(request["taskId"], agent_id=request["agent"], token=token).to_dict())
     before = publisher.read_verified(storage)
+    if action == "withdraw":
+        result = withdraw(client, request)
+        after = publisher.read_verified(storage, before).graph
+        if result.success:
+            for item in result.data["cancelled"]:
+                require(after.nodes[item["task_id"]].state.name == "CANCELLED", "Withdrawn task is not cancelled on readback; stop and inspect")
+        return result.to_dict()
     if action in {"publish", "publish-batch"}:
         publications = [request["publication"]] if action == "publish" else request.get("publications")
         require(isinstance(publications, list) and 1 <= len(publications) <= 30, "Expected 1-30 publications")
@@ -94,7 +174,7 @@ def execute(args):
         else:
             result = client.complete(task_id, agent_id=agent, token=token, summary=request.get("summary", ""), critical=request.get("critical", {}), artifacts=request.get("artifacts", ""), deliverables=request.get("deliverables"))
     publisher.read_verified(storage, before)
-    return result.to_dict()
+    return withdrawn_claim(storage, task_id, result.to_dict()) if action in {"complete", "release"} else result.to_dict()
 
 
 def main():
