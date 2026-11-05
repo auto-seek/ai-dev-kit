@@ -3,32 +3,15 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const { randomBytes, randomUUID, createHash } = require("node:crypto");
+const { randomBytes, randomUUID } = require("node:crypto");
 const { parseArgs } = require("node:util");
 const { createInterface } = require("node:readline/promises");
 const { createClient } = require("./cascade-portal-client.cjs");
 const { createNodeClient } = require("./cascade-node-client.cjs");
-const { publicKey } = require("./cascade-portal/admission.cjs");
 const { HARNESS } = require("./cascade-portal/store.cjs");
-const { runProcess, redact } = require("./cascade-process.cjs");
+const { redact } = require("./cascade-process.cjs");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-// The control socket is <directory>/mux/<port>. ssh(1) first binds it with a
-// ".<16 random characters>" suffix; that path and its NUL terminator must fit
-// sockaddr_un.sun_path (104 bytes on macOS/BSD, 108 on Linux).
-const MAX_DIRECTORY_BYTES =
-  (process.platform === "linux" ? 108 : 104) -
-  "/mux/65535.0123456789abcdef".length -
-  1;
 
-async function run(command, args, env) {
-  const result = await runProcess(command, args, {
-    timeoutSeconds: 180,
-    ...(env ? { env } : {}),
-  });
-  if (result.code !== 0)
-    throw new Error(`Setup command failed (${result.code}): ${result.stderr}`);
-  return result.stdout.trim();
-}
 async function privateDirectory(directory) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const stat = await fs.lstat(directory);
@@ -50,51 +33,6 @@ async function privateFile(filename) {
   )
     throw new Error("Agent configuration must be a private regular file");
   return fs.readFile(filename, "utf8");
-}
-async function runtime(directory) {
-  const version = "0.8.2+nodecollab.6";
-  if (process.env.NODE_CASCADE_PYTHON) {
-    const python = process.env.NODE_CASCADE_PYTHON;
-    if (!path.isAbsolute(python))
-      throw new Error("NODE_CASCADE_PYTHON must be absolute");
-    await run(python, [
-      "-c",
-      `import importlib.metadata;assert importlib.metadata.version('cascade-auto')=='${version}'`,
-    ]);
-    return python;
-  }
-  await run("python3", [
-    "-c",
-    "import sys;assert sys.version_info >= (3,11), 'Python >=3.11 is required'",
-  ]);
-  const dist = path.resolve(__dirname, "../deploy/cascade-runtime");
-  const manifest = await fs.readFile(
-    path.join(dist, "NODE_SHA256SUMS"),
-    "utf8",
-  );
-  for (const line of manifest.trim().split("\n")) {
-    const match = /^([a-f0-9]{64})  ([A-Za-z0-9_+./-]+)$/.exec(line);
-    if (!match || match[2].split("/").includes(".."))
-      throw new Error("Invalid pinned runtime manifest");
-    const actual = createHash("sha256")
-      .update(await fs.readFile(path.join(dist, match[2])))
-      .digest("hex");
-    if (actual !== match[1])
-      throw new Error("Pinned runtime checksum mismatch");
-  }
-  const venv = path.join(directory, "runtime"),
-    python = path.join(venv, "bin/python");
-  await run("python3", ["-m", "venv", venv]);
-  await run(python, [
-    "-m",
-    "pip",
-    "install",
-    "--no-index",
-    "--find-links",
-    path.join(dist, "node-dependencies"),
-    path.join(dist, `cascade_auto-${version}-py3-none-any.whl`),
-  ]);
-  return python;
 }
 async function configuredOrigin(origin, directory) {
   if (origin !== undefined) return origin;
@@ -120,6 +58,9 @@ function projectAddress(value, origin) {
 }
 async function join({ projectId, level, origin, directory, harness }) {
   ({ projectId, origin } = projectAddress(projectId, origin));
+  origin = await configuredOrigin(origin, directory);
+  if (origin === undefined)
+    throw new Error("Center address is required: use the copied ID@origin, --origin or CASCADE_CENTER_ORIGIN");
   if (
     !/^project_[A-Za-z0-9_-]{32}$/.test(projectId || "") ||
     !["lite", "pro", "max"].includes(level)
@@ -127,9 +68,6 @@ async function join({ projectId, level, origin, directory, harness }) {
     throw new Error("Enter a valid project ID and lite, pro or max");
   if (harness !== undefined && !HARNESS.test(harness))
     throw new Error("--harness must be a lowercase name such as codex, claude or antigravity");
-  origin = await configuredOrigin(origin, directory);
-  if (origin === undefined)
-    throw new Error("Center address is required: use the copied ID@origin, --origin or CASCADE_CENTER_ORIGIN");
   const url = URL.parse(origin) ?? {};
   if (
     url.protocol !== "https:" ||
@@ -138,27 +76,20 @@ async function join({ projectId, level, origin, directory, harness }) {
     url.password
   )
     throw new Error("An exact HTTPS center origin is required");
-  // A 64-bit name keeps the default SSH control socket path short for long home directories.
   directory = path.resolve(
     directory ||
       path.join(os.homedir(), ".cascade/agents", randomBytes(8).toString("hex")),
   );
-  // Checked before key generation so a shorter directory can be chosen without registering an agent.
-  if (Buffer.byteLength(directory) > MAX_DIRECTORY_BYTES)
-    throw new Error(
-      `Agent directory is too long for its SSH control socket: use a --directory of at most ${MAX_DIRECTORY_BYTES} bytes`,
-    );
   if (/[\r\n\0]/.test(directory) || !(await privateDirectory(directory)))
     throw new Error("Agent directory must be private");
   const pendingFile = path.join(directory, "enrollment.json"),
-    tokenFile = path.join(directory, "token"),
-    key = path.join(directory, "id_ed25519");
+    tokenFile = path.join(directory, "token");
   let pending;
   try {
     pending = JSON.parse(await privateFile(pendingFile));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    // The per-directory lock prevents two shells from registering the same private key as different agents.
+    // The per-directory lock prevents two shells from registering the same directory as different agents.
     const lock = await fs.open(
       path.join(directory, ".setup-lock"),
       "wx",
@@ -166,35 +97,19 @@ async function join({ projectId, level, origin, directory, harness }) {
     );
     try {
       try {
-        await fs.access(key);
+        await fs.access(tokenFile);
         throw new Error(
           "Incomplete local setup: use a new empty agent directory",
         );
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      await run("ssh-keygen", [
-        "-q",
-        "-t",
-        "ed25519",
-        "-N",
-        "",
-        "-C",
-        "cascade-project-agent",
-        "-f",
-        key,
-      ]);
-      const pub = (await fs.readFile(`${key}.pub`, "utf8"))
-        .trim()
-        .split(" ")
-        .slice(0, 2)
-        .join(" ");
+      // The agent writes only through the center over HTTPS, so it registers no SSH key.
       pending = {
         origin,
         projectId,
         level,
         requestId: randomUUID(),
-        publicKey: publicKey(pub),
         token: randomBytes(32).toString("hex"),
       };
       await fs.writeFile(tokenFile, pending.token, { mode: 0o600, flag: "wx" });
@@ -218,68 +133,25 @@ async function join({ projectId, level, origin, directory, harness }) {
       );
     if ((await privateFile(tokenFile)).trim() !== pending.token)
       throw new Error("Local enrollment token changed");
-    await privateFile(key);
-    const python = await runtime(directory);
     const transport = await createClient({ origin, tokenFile });
+    // A directory set up by an earlier version keeps the public key it registered, so the
+    // center recognises the same enrollment and returns the same agent.
     const { origin: ignored, ...body } = pending;
     const enrolled = await transport.api("join", body);
-    const remote = new URL(enrolled.remote);
-    if (
-      remote.protocol !== "ssh:" ||
-      remote.password ||
-      !/^[a-z][a-z0-9-]*$/.test(remote.username) ||
-      !/^[A-Za-z0-9.:-]+$/.test(remote.hostname) ||
-      !/^\/[A-Za-z0-9/._-]+\.git$/.test(remote.pathname) ||
-      remote.pathname.split("/").includes("..") ||
-      remote.hash ||
-      remote.search
-    )
-      throw new Error("Center returned an invalid SSH repository");
-    publicKey(enrolled.hostKey);
     if (
       !enrolled.agent ||
       enrolled.agent.ownerKind !== "project" ||
       enrolled.agent.tier !== level ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(enrolled.agent.id)
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(enrolled.agent.id) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(enrolled.centerId || "")
     )
       throw new Error("Center returned an invalid agent binding");
-    const hosts = path.join(directory, "known_hosts"),
-      sshConfig = path.join(directory, "ssh_config"),
-      configFile = path.join(directory, "client.json");
-    const host =
-      remote.port && remote.port !== "22"
-        ? `[${remote.hostname}]:${remote.port}`
-        : remote.hostname;
-    await fs.writeFile(hosts, `${host} ${enrolled.hostKey}\n`, { mode: 0o600 });
-    const mux = path.join(directory, "mux");
-    if (!(await privateDirectory(mux)))
-      throw new Error("SSH control socket directory must be private");
-    // ssh_config expands % tokens in these paths, so a literal % is doubled.
-    const sshPath = (value, token = "") =>
-      '"' +
-      value
-        .replaceAll("\\", "\\\\")
-        .replaceAll('"', '\\"')
-        .replaceAll("%", "%%") +
-      token +
-      '"';
-    // Multiplexing is limited to the enrolled user and host; %p separates ports.
-    // ControlPersist covers the Git round trips of one operation and nearby
-    // commands, then closes the idle connection after 60 seconds.
-    await fs.writeFile(
-      sshConfig,
-      `Match host ${remote.hostname} user ${remote.username}\n  ControlMaster auto\n  ControlPersist 60\n  ControlPath ${sshPath(mux, "/%p")}\nHost *\n  IdentityFile ${sshPath(key)}\n  IdentitiesOnly yes\n  IdentityAgent none\n  UserKnownHostsFile ${sshPath(hosts)}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  BatchMode yes\n  ConnectTimeout 10\n  ServerAliveInterval 15\n  ServerAliveCountMax 2\n  ClearAllForwardings yes\n  RequestTTY no\n`,
-      { mode: 0o600 },
-    );
+    const configFile = path.join(directory, "client.json");
     const config = {
       origin,
       tokenFile,
       centerId: enrolled.centerId,
-      remote: enrolled.remote,
-      namespace: enrolled.namespace,
-      cascadePython: python,
       cacheDir: path.join(directory, "cache"),
-      sshConfig,
     };
     const temp = path.join(directory, `.config-${randomUUID()}`);
     await fs.writeFile(temp, JSON.stringify(config, null, 2), {
@@ -288,29 +160,19 @@ async function join({ projectId, level, origin, directory, harness }) {
     });
     await fs.rename(temp, configFile);
     const client = await createNodeClient(config);
-    const ssh = `ssh -F ${quote(sshConfig)}`;
-    const refs = await run(
-      "git",
-      [
-        "ls-remote",
-        "--exit-code",
-        config.remote,
-        `refs/heads/cascade-state/${config.namespace}`,
-      ],
-      { ...process.env, GIT_SSH_COMMAND: ssh },
-    );
-    if (!/^[a-f0-9]{40}\s+refs\/heads\/cascade-state\//.test(refs))
-      throw new Error("Project Git state ref is unavailable");
-    const environment = `export GIT_SSH_COMMAND=${quote(ssh)}\nexport CASCADE_NODE_CLIENT_CONFIG=${quote(configFile)}\n`;
+    // The center executes this agent's work only through its writer; reading the agent's
+    // leases there checks the writer and the credential end to end.
+    client.requireWriter();
+    const leases = await client.api("execution/leases");
+    if (leases.agent !== enrolled.agent.id)
+      throw new Error("The center writer answered for another agent");
+    const environment = `export CASCADE_NODE_CLIENT_CONFIG=${quote(configFile)}\n`;
     await fs.writeFile(path.join(directory, "environment.sh"), environment, {
       mode: 0o600,
     });
-    // Existing supervisors inherit the same SSH identity, message binding and native lease protocol.
-    await fs.writeFile(
-      path.join(directory, "with-agent"),
-      `#!/bin/sh\nset -eu\n${environment}exec "$@"\n`,
-      { mode: 0o700 },
-    );
+    // with-agent gave a supervised Cascade worker this agent's SSH identity for direct Git
+    // writes. Those writes are gone: such a worker needs Cascade's center HTTPS mode.
+    await fs.rm(path.join(directory, "with-agent"), { force: true });
     if (harness !== undefined) await client.api("agent-profile", { harness });
     // A signed-in project member confirms ownership by entering this short-lived code on the web.
     const ownerCode = enrolled.agent.owner
@@ -361,9 +223,9 @@ async function main() {
     });
     try {
       projectId ||= (await prompt.question("项目 ID（可含 @中心地址）：")).trim();
+      level ||= (await prompt.question("模型 level（lite/pro/max）：")).trim();
       if (await centerMissing())
         origin = (await prompt.question("中心地址（HTTPS，无路径）：")).trim();
-      level ||= (await prompt.question("模型 level（lite/pro/max）：")).trim();
     } finally {
       prompt.close();
     }

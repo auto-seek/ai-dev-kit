@@ -319,9 +319,9 @@ node scripts/upgrade-v1-to-skill.cjs /path/to/project --harness both
 
 ## Repository Commands
 
-The build requires Node >=24.21.0, Python >=3.11 with venv/pip, Git and
-OpenSSL. Center configuration tests install the bundled runtime offline and
-use temporary local HTTPS fixtures; they do not register with a live center.
+The build requires Node >=24.21.0, Python >=3.11, Git and OpenSSL. Center
+configuration tests use temporary local HTTPS fixtures; they do not register
+with a live center.
 
 ```bash
 npm run build
@@ -334,7 +334,4 @@ npm run install:skill -- --target both
 
 MIT, see [LICENSE](LICENSE). Bundled third-party material keeps its own license:
 `licenses/codex-skill-creator-APACHE-2.0.txt` (Apache-2.0),
-`skills/cascade-flow/scripts/cascade-flow/vendor/DAGRE-LICENSE` (MIT), and the
-Cascade runtime and dependency wheels under
-`skills/cascade-center-agent/deploy/cascade-runtime/`, each of which contains its
-license in its `.dist-info` directory.
+and `skills/cascade-flow/scripts/cascade-flow/vendor/DAGRE-LICENSE` (MIT).

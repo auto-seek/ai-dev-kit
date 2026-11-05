@@ -54,8 +54,19 @@ async function createClient(config) {
     if (!response.ok) throw Object.assign(new Error(`Center HTTP ${response.status}: ${result.error || "request failed"}`), { status: response.status });
     return result;
   };
+  // One exchange whose outcome the caller decides from the status: no status for a network error.
+  const request = async (route, body, timeoutMs) => {
+    const response = await fetch(`${origin.origin}/api/agent/${route}`, {
+      method: body !== undefined ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await response.text();
+    let result;
+    try { result = JSON.parse(text); } catch { result = { error: text.slice(0, 500) }; }
+    return { status: response.status, retryAfter: response.headers.get("retry-after"), body: result };
+  };
   return {
-    api,
+    api, request,
     async upload(id, filename, name = path.basename(filename)) {
       const stat = await fs.lstat(filename);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1) throw new Error("Artifact must be a regular, nonempty, nonsymlink file");

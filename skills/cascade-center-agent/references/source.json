@@ -1,22 +1,18 @@
 {
   "sourceRepository": "AutoSeek CascadeCenter-web (internal, not published)",
-  "sourceCommit": "b836cc1f27fd179ab6209ee27880dc34f580894b",
+  "sourceCommit": "8905575e9ca159b5eadf9bb6a7ddda6c9e219da1",
   "files": [
     "scripts/cascade-node-client.cjs",
     "scripts/cascade-node-join.cjs",
-    "scripts/cascade-node-native.py",
-    "scripts/cascade-portal/admission.cjs",
     "scripts/cascade-portal/collaboration-store.cjs",
     "scripts/cascade-portal/store.cjs",
     "scripts/cascade-portal/workflow-store.cjs",
     "scripts/cascade-portal-client.cjs",
-    "scripts/cascade-portal-publish.py",
     "scripts/cascade-process.cjs"
   ],
-  "runtime": "0.8.2+nodecollab.6",
-  "packagedAt": "2026-11-01",
+  "packagedAt": "2026-11-05",
   "localModifications": {
-    "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source.",
-    "deploy/cascade-runtime/NODE_SHA256SUMS": "Only the 0.8.2+nodecollab.6 package is shipped: the .5, .3 and .1 wheels and their storage patches (node-storage-concurrency-nc5.patch, node-storage-concurrency.patch) are left out together with their lines, so the manifest lists exactly the shipped files. Every other runtime file, including NODE_PROVENANCE.json, is byte-identical to the source."
-  }
+    "scripts/cascade-node-join.cjs": "No built-in center address: a bare project ID uses --origin, CASCADE_CENTER_ORIGIN or the saved enrollment origin, and an interactive run asks for the address when none is set. The copied ID@origin form, its --origin conflict check, --harness and the owner confirmation code follow the source."
+  },
+  "notShipped": "The agent runs no Cascade: no deploy/cascade-runtime/, cascade-node-native.py, cascade-portal-publish.py or cascade-portal/admission.cjs. Execution goes to the center writer over HTTPS."
 }

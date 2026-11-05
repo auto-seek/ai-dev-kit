@@ -17,8 +17,6 @@ const script = path.join(skill, "scripts/cascade-node-join.cjs");
 const projectId = "project_0123456789abcdefghijklmnopqrstuv";
 
 test("packaged join CLI selects a configured center and preserves retry identity", async t => {
-  // Agent directories live under this root, and join caps them at 76 bytes on
-  // macOS for the SSH control socket; macOS's per-user tmpdir already takes 49.
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cc-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const env = {
@@ -29,16 +27,10 @@ test("packaged join CLI selects a configured center and preserves retry identity
     timeoutSeconds: 60, env: { ...env, ...extra },
   });
   const ok = result => assert.equal(result.code, 0, result.stderr);
-  const python = path.join(root, "runtime/bin/python");
-  ok(await run("python3", ["-m", "venv", path.join(root, "runtime")]));
-  ok(await run(python, ["-m", "pip", "install", "--no-index", "--find-links",
-    path.join(skill, "deploy/cascade-runtime/node-dependencies"),
-    path.join(skill, "deploy/cascade-runtime/cascade_auto-0.8.2+nodecollab.6-py3-none-any.whl")]));
   const cert = path.join(root, "server.pem"), key = path.join(root, "server.key");
   ok(await run("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
     "-sha256", "-days", "1", "-subj", "/CN=127.0.0.1", "-addext",
     "subjectAltName=IP:127.0.0.1", "-keyout", key, "-out", cert]));
-  env.NODE_CASCADE_PYTHON = python;
   env.NODE_EXTRA_CA_CERTS = cert;
   const centers = [];
   for (let i = 0; i < 2; i++) {
@@ -47,8 +39,8 @@ test("packaged join CLI selects a configured center and preserves retry identity
       let body = "";
       for await (const chunk of req) body += chunk;
       requests.push({ path: req.url, method: req.method, body: JSON.parse(body), authorization: req.headers.authorization });
-      // Registration rejection ends the journey before Git; the real client,
-      // runtime check, private files and TLS transport still execute.
+      // Registration rejection ends the journey; the real client, private files
+      // and TLS transport still execute.
       res.writeHead(409, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Fixture admission closed" }));
     });
@@ -85,15 +77,6 @@ test("packaged join CLI selects a configured center and preserves retry identity
       script, directory, projectId]);
     assert.equal(result.code, 1);
     assert.match(result.stderr, /Center address is required/);
-    await assert.rejects(fs.stat(directory), { code: "ENOENT" });
-    assert.equal(a.requests.length + b.requests.length, 0);
-  });
-
-  await t.test("an agent directory too long for the SSH control socket fails before creating an identity", async () => {
-    const directory = path.join(root, "d".repeat(90));
-    const result = await join(directory, ["--origin", a.origin]);
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /Agent directory is too long for its SSH control socket/);
     await assert.rejects(fs.stat(directory), { code: "ENOENT" });
     assert.equal(a.requests.length + b.requests.length, 0);
   });
@@ -181,13 +164,11 @@ test("packaged join CLI selects a configured center and preserves retry identity
     }
     assert.equal(a.requests.length + b.requests.length, 5);
   });
-  await t.test("without a configured interpreter join installs the packaged runtime before registering", async () => {
-    const directory = path.join(root, "own-runtime");
-    rejected(await join(directory, ["--origin", a.origin], { NODE_CASCADE_PYTHON: undefined }));
+  await t.test("join installs no runtime and registers a token only, without an SSH key", async () => {
+    const directory = path.join(root, "token-only");
+    rejected(await join(directory, ["--origin", a.origin]));
     assert.equal(a.requests.length, 4);
-    const version = await run(path.join(directory, "runtime/bin/python"), ["-c",
-      "import importlib.metadata;print(importlib.metadata.version('cascade-auto'))"]);
-    ok(version);
-    assert.equal(version.stdout.trim(), "0.8.2+nodecollab.6");
+    assert.deepEqual(Object.keys(a.requests[3].body).sort(), ["level", "projectId", "requestId", "token"]);
+    assert.deepEqual((await fs.readdir(directory)).sort(), ["enrollment.json", "token"]);
   });
 });

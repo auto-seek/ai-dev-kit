@@ -124,6 +124,12 @@ function collaborationStore(db, { fail, text, exact, canonical, digest }) {
         WHERE m.center_id=? AND r.agent_id=? AND r.read_at IS NULL`).get(center, agent).n;
       return { messages, unread, nextCursor: messages.at(-1)?.sequence ?? after };
     },
+    // The agent's unread messages on one task, which it must read before completing it.
+    unreadOnTask(center, agent, task) {
+      id(center); id(agent); id(task);
+      return db.prepare(`SELECT m.id FROM node_messages m JOIN node_receipts r ON r.message_id=m.id
+        WHERE m.center_id=? AND r.agent_id=? AND m.task_id=? AND r.read_at IS NULL ORDER BY m.seq LIMIT 100`).all(center, agent, task).map(row => row.id);
+    },
     receipt(center, agent, input) {
       exact(input, ["messageIds", "state"]);
       if (!Array.isArray(input.messageIds) || !input.messageIds.length || input.messageIds.length > 100 || !["pulled", "read"].includes(input.state)) fail(400, "消息回执无效");

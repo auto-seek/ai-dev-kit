@@ -8,6 +8,40 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-05
+
+### Changed
+- `cascade-center-agent` executes tasks only over HTTPS: `claim`, `renew`,
+  `complete`, `release` and the new `fail` go to the center writer through the
+  portal. Each claim and ending has a UUID v4 request ID, saved under
+  `cacheDir/node-requests/` before it is sent and resent unchanged on network
+  errors, timeouts, 429 and 503 (1 to 30 seconds of backoff with jitter, 65
+  seconds per attempt) until the center decides it; after 10 minutes the
+  command reports `OUTCOME_UNKNOWN` and keeps the ID, and `request --id`
+  settles it. `renew --every SECONDS` renews in a loop and stops when the
+  lease is lost (`TASK_WITHDRAWN`, `STALE_TOKEN` and others). A center
+  without a center writer is an explicit error; the client never writes over
+  SSH.
+- `cascade-node-join.cjs` no longer installs a Python runtime or generates an
+  SSH key; it registers a token only and checks the center writer. Re-joining
+  an existing directory returns the same agent, rewrites `client.json` and
+  removes `with-agent`; the old runtime, key and SSH configuration stay for a
+  rollback. `references/rejoin.md` is a step-by-step guide for agents to
+  switch. Agents run by a Cascade supervised worker stay on 0.32.0: the worker
+  still writes over SSH.
+- The bundled clients come from CascadeCenter-web `8905575` (previously
+  `b836cc1`). `cascade-node-client.cjs`, `cascade-portal-client.cjs`,
+  `cascade-process.cjs` and the three `cascade-portal/*-store.cjs` files are
+  byte-identical to the source; `cascade-node-join.cjs` keeps the kit's
+  no-built-in-center change.
+
+### Removed
+- `skills/cascade-center-agent/deploy/cascade-runtime/` (the
+  `0.8.2+nodecollab.6` wheel, dependencies and patches),
+  `cascade-node-native.py`, `cascade-portal-publish.py` and
+  `cascade-portal/admission.cjs`: agents no longer run Cascade. Install 0.32.0
+  to roll back.
+
 ## [0.32.0] - 2026-11-01
 
 ### Added

@@ -195,6 +195,14 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] `npm run build`, skill validation, gitleaks, an internal-address grep and the Center withdrawal tests (`tests/cascade-node.test.cjs`, with the packaged scripts) pass.
 - [x] Version bump in all three manifests and the release, done by the kit maintainer after review (0.32.0).
 
+## center-https-client
+
+- [x] Package the CascadeCenter-web `8905575` client: `cascade-node-client.cjs` (claim, renew, complete, release and fail over HTTPS with saved request IDs and retries, `renew --every`, `request --id`), `cascade-portal-client.cjs`, `cascade-process.cjs` and the `cascade-portal/*-store.cjs` files byte-identical; `cascade-node-join.cjs` keeps the kit's no-built-in-center change and no longer installs a runtime or generates an SSH key.
+- [x] No Cascade runtime ships: `deploy/cascade-runtime/`, `cascade-node-native.py`, `cascade-portal-publish.py` and `cascade-portal/admission.cjs` are removed.
+- [x] `SKILL.md`, `references/task-cycle.md` and the new `references/rejoin.md` describe the HTTPS client, the re-join in the same directory, supervised workers staying on 0.32.0 and the rollback; source records name `8905575`.
+- [x] `tests/cascade-center-config.test.cjs` checks that join registers a token only; `npm run build` passes.
+- [ ] Version bump to 0.33.0 in all three manifests is on the branch; the release is done by the kit maintainer after review, once the center runs the release with the execution endpoints.
+
 ## workstation-pool
 
 - [x] `templates/workstation/` provides the generic Linux workstation image (Xvfb, `ws-run` batch/session entry with process-group timeout and `ws-run.json`, `ws-shot`, `ws-input`) and a Godot .NET example layer with official SHA512-checked downloads; `tests/workstation.test.cjs` covers the entry with real containers.
