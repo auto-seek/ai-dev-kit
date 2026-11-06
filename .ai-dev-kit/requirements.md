@@ -201,7 +201,8 @@ ledger. This tracked file is the per-branch implementation acceptance contract.
 - [x] No Cascade runtime ships: `deploy/cascade-runtime/`, `cascade-node-native.py`, `cascade-portal-publish.py` and `cascade-portal/admission.cjs` are removed.
 - [x] `SKILL.md`, `references/task-cycle.md` and the new `references/rejoin.md` describe the HTTPS client, the re-join in the same directory, supervised workers staying on 0.32.0 and the rollback; source records name `8905575`.
 - [x] `tests/cascade-center-config.test.cjs` checks that join registers a token only; `npm run build` passes.
-- [ ] Version bump to 0.33.0 in all three manifests is on the branch; the release is done by the kit maintainer after review, once the center runs the release with the execution endpoints.
+- [x] Version bump to 0.33.0 in all three manifests; the release is done by the kit maintainer after review, once the center runs the release with the execution endpoints (CascadeCenter-web `2667c13`, live since 2026-11-05 11:58 UTC).
+- [x] Release review: skill validation, gitleaks over the commit and the tree, an internal-address grep, `npm test`, and the CascadeCenter-web `2667c13` node tests (`npm run test:nodes` with the packaged scripts, nodecollab.7 writer, nodecollab.3 guard and the 0.8.0 `CASCADE_PYTHON`, 53/53) pass.
 
 ## workstation-pool
 

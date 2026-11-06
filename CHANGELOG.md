@@ -8,7 +8,7 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
-## [0.33.0] - 2026-11-05
+## [0.33.0] - 2026-11-06
 
 ### Changed
 - `cascade-center-agent` executes tasks only over HTTPS: `claim`, `renew`,
