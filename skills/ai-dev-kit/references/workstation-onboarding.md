@@ -84,6 +84,7 @@ Each pool:
 | `memory` | `"2.5g"` | memory limit per workstation, swap included (at least `64m`) |
 | `screen` | `"1920x1080x24"` | Xvfb screen, `WxHxD` with depth 8, 16 or 24 |
 | `env` | `{}` | environment for the workstation, for example `WS_PLAY_NODE`, `WS_PLAY_SUMMARY` and `WS_PLAY_TYPE` |
+| `watch` | `false` | `false`, `true`, or `{ "enabled", "bind", "port" }`: read-only noVNC viewer (`bind` defaults to `"127.0.0.1"`, `port` `0` picks an ephemeral host port; CLI `--watch` / `--no-watch` / `--watch-bind` / `--watch-port` override) |
 | `mounts` | `[]` | extra bind mounts `{ "source", "target", "readonly" }`; `source` may start with `~/`, `target` is absolute |
 | `start` | required | argv every run starts with; extra run arguments follow it |
 | `user` | `"host"` | `"host"` runs as your uid and gid (files it writes stay yours); `"image"` uses the image's user |
@@ -108,7 +109,9 @@ These are measured with Godot 4.7 .NET running a 4K Forward+ capture on
 lavapipe: run-only peaked at 2.50 GiB, build and run at 2.55 GiB and was
 OOM-killed once at 2.5g. Three run-only workstations together used 7.1 GiB.
 Lower resolutions and lighter programs need less; the starter example uses
-512m and one CPU. Measure your own peak: `ws-run.json` records
+512m and one CPU. Enabling `watch` adds `x11vnc` + `websockify` (~52 MiB
+combined RSS, ~39–45 MiB cgroup memory delta at 1920x1080x24) and uses zero
+memory or ports when off. Measure your own peak: `ws-run.json` records
 `container.memory_peak_bytes` and `oom_kills` for every run.
 
 A Godot .NET project with 1.6 GB of assets runs this way: three slots of 3

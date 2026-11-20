@@ -18,6 +18,9 @@ RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/
       xdotool=1:3.20160805.1-5.1 \
       x11-utils=7.7+7 \
       x11-apps=7.7+11+b2 \
+      x11vnc=0.9.17-1 \
+      novnc=1:1.6.0-2 \
+      websockify=0.12.0+dfsg1-4+b1 \
       netpbm=2:11.10.02-1 \
       xauth=1:1.1.2-1.1 \
       tini \

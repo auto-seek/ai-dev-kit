@@ -375,3 +375,110 @@ test("a claim records its workstation, image id, screen and start command in cla
   assert.equal(JSON.parse(fs.readFileSync(path.join(held.out, "ws-run.json"), "utf8")).screen, "640x480x24");
   assert.equal(p.cli("release", ["--pool", "ws", "--token", held.token]).code, 0);
 });
+
+async function rfbRoundTrip(wsUrl) {
+  const ws = new WebSocket(wsUrl, ["binary"]);
+  ws.binaryType = "arraybuffer";
+  let buf = Buffer.alloc(0);
+  const waiters = [];
+  const notify = () => {
+    while (waiters.length && buf.length >= waiters[0].n) {
+      const { n, resolve } = waiters.shift();
+      const slice = buf.subarray(0, n);
+      buf = buf.subarray(n);
+      resolve(slice);
+    }
+  };
+  const readExact = n => new Promise((resolve, reject) => {
+    if (buf.length >= n) {
+      const slice = buf.subarray(0, n);
+      buf = buf.subarray(n);
+      return resolve(slice);
+    }
+    waiters.push({ n, resolve, reject });
+  });
+  ws.addEventListener("message", event => {
+    buf = Buffer.concat([buf, Buffer.from(event.data)]);
+    notify();
+  });
+  ws.addEventListener("error", event => {
+    while (waiters.length) waiters.shift().reject(new Error(`WebSocket error: ${event.message || "failed"}`));
+  });
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", reject, { once: true });
+  });
+  try {
+    const version = (await readExact(12)).toString("ascii");
+    assert.match(version, /^RFB 003\.008\n$/);
+    ws.send(Buffer.from("RFB 003.008\n", "ascii"));
+    const secCount = (await readExact(1))[0];
+    assert.ok(secCount >= 1);
+    const secTypes = await readExact(secCount);
+    assert.ok(secTypes.includes(1), "RFB offers None security for view-only viewer");
+    ws.send(Buffer.from([1]));
+    const secResult = (await readExact(4)).readUInt32BE(0);
+    assert.equal(secResult, 0);
+    ws.send(Buffer.from([1]));
+    const serverInit = await readExact(24);
+    const width = serverInit.readUInt16BE(0);
+    const height = serverInit.readUInt16BE(2);
+    const nameLen = serverInit.readUInt32BE(20);
+    await readExact(nameLen);
+    ws.send(Buffer.from([3, 0, 0, 0, 0, 0, (width >> 8) & 255, width & 255, (height >> 8) & 255, height & 255]));
+    const msgType = (await readExact(1))[0];
+    assert.equal(msgType, 0, "viewer receives FramebufferUpdate");
+    // Send KeyEvent ('a' = 0x61) and PointerEvent (left button at 50,60): x11vnc -viewonly must drop them.
+    ws.send(Buffer.from([4, 1, 0, 0, 0, 0, 0, 0x61, 4, 0, 0, 0, 0, 0, 0x61]));
+    ws.send(Buffer.from([5, 1, 0, 50, 0, 60, 5, 0, 0, 50, 0, 60]));
+    // Sync round-trip so x11vnc has processed the input messages before we inspect xev.
+    ws.send(Buffer.from([3, 1, 0, 0, 0, 0, 0, 1, 0, 1]));
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return { width, height };
+  } finally {
+    ws.close();
+  }
+}
+
+test("view-only noVNC serves live screen without passing input, and stays off by default", async t => {
+  const p = pool(t, { slots: 2 });
+  const off = JSON.parse(p.cli("claim", ["--pool", "ws", "--label", "watch-off", "--json"]).stdout);
+  t.after(() => p.cli("release", ["--pool", "ws", "--token", off.token]));
+  assert.equal(off.watch, undefined);
+  assert.equal(docker(["port", off.workstation]).stdout.trim(), "", "no host ports exposed when watch is off");
+  assert.notEqual(docker(["exec", off.workstation, "pgrep", "-x", "x11vnc"]).status, 0, "x11vnc must not run when watch is off");
+  assert.notEqual(docker(["exec", off.workstation, "pgrep", "-f", "websockify"]).status, 0, "websockify must not run when watch is off");
+  p.cli("release", ["--pool", "ws", "--token", off.token]);
+
+  const on = JSON.parse(p.cli("claim", ["--pool", "ws", "--watch", "--label", "watch-on", "--json"]).stdout);
+  t.after(() => p.cli("release", ["--pool", "ws", "--token", on.token]));
+  assert.equal(on.watch.bind, "127.0.0.1");
+  assert.match(docker(["port", on.workstation, "6080/tcp"]).stdout.trim(), /^127\.0\.0\.1:\d+$/);
+
+  const page = await fetch(on.watch.url);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /noVNC/i);
+
+  assert.equal(docker(["exec", "-d", on.workstation, "bash", "-c", "xev -geometry 300x200+0+0 -event keyboard -event button > /ws/out/watch-xev.log"]).status, 0);
+  assert.equal(docker(["exec", on.workstation, "ws-input", "wait", "Event Tester", "10"]).status, 0);
+  assert.equal(docker(["exec", on.workstation, "ws-input", "focus", "Event Tester"]).status, 0);
+
+  const wsUrl = on.watch.url.replace(/^http:/, "ws:").replace(/\/vnc\.html.*/, "/websockify");
+  const fb = await rfbRoundTrip(wsUrl);
+  assert.deepEqual([fb.width, fb.height], [640, 480]);
+
+  assert.equal(docker(["exec", on.workstation, "ws-input", "key", "b"]).status, 0);
+  const xevLog = fs.readFileSync(path.join(on.out, "watch-xev.log"), "utf8");
+  assert.match(xevLog, /keysym 0x62, b/, "xev is listening to container keyboard input");
+  assert.doesNotMatch(xevLog, /keysym 0x61, a/, "viewer keyboard events must not reach the workstation");
+  assert.doesNotMatch(xevLog, /ButtonPress|ButtonRelease/, "viewer pointer events must not reach the workstation");
+
+  const second = JSON.parse(p.cli("claim", ["--pool", "ws", "--watch", "--watch-bind", "0.0.0.0", "--label", "watch-lan", "--json"]).stdout);
+  t.after(() => p.cli("release", ["--pool", "ws", "--token", second.token]));
+  assert.equal(second.watch.bind, "0.0.0.0");
+  assert.notEqual(second.watch.port, on.watch.port, "each workstation receives its own host port");
+  assert.match(docker(["port", second.workstation, "6080/tcp"]).stdout.trim(), /^0\.0\.0\.0:\d+$/);
+
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", on.token]).code, 0);
+  assert.equal(p.cli("release", ["--pool", "ws", "--token", second.token]).code, 0);
+});

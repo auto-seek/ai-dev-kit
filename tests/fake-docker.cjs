@@ -38,7 +38,7 @@ const file = name => path.join(containers, `${name}.json`);
 const imageLines = () => { try { return fs.readFileSync(path.join(state, "images.txt"), "utf8").split("\n").filter(Boolean); } catch { return []; } };
 const images = () => imageLines().map(line => line.split("\t")[0]);
 const fail = (code, message) => { process.stderr.write(`${message}\n`); process.exit(code); };
-const VALUED = new Set(["--name", "--label", "--cpus", "--memory", "--memory-swap", "-e", "--user", "-v", "-w", "--filter", "--format", "-t", "-f", "--build-arg", "--entrypoint"]);
+const VALUED = new Set(["--name", "--label", "--cpus", "--memory", "--memory-swap", "-e", "--user", "-v", "-w", "-p", "--filter", "--format", "-t", "-f", "--build-arg", "--entrypoint"]);
 
 function options(list) {
   const found = { labels: {}, filters: [], rest: [] };
@@ -98,7 +98,13 @@ switch (command) {
     const [image, ...cmd] = found.rest;
     if (!images().includes(image)) fail(125, `Unable to find image '${image}' locally`);
     try {
-      fs.writeFileSync(file(found["--name"]), JSON.stringify({ name: found["--name"], image, cmd, labels: found.labels, args: rest }), { flag: "wx" });
+      let portMap = null;
+      if (found["-p"]) {
+        const [bind, hostPort, containerPort] = found["-p"].split(":");
+        const slot = Number(found.labels["ai-dev-kit.workstation.slot"] || 0);
+        portMap = { bind, hostPort: hostPort ? Number(hostPort) : 46080 + slot, containerPort: `${containerPort}/tcp` };
+      }
+      fs.writeFileSync(file(found["--name"]), JSON.stringify({ name: found["--name"], image, cmd, labels: found.labels, args: rest, portMap }), { flag: "wx" });
     } catch (error) {
       if (error.code === "EEXIST") fail(125, `Conflict. The container name "/${found["--name"]}" is already in use`);
       throw error;
@@ -106,10 +112,19 @@ switch (command) {
     process.stdout.write(`fake-${found["--name"]}\n`);
     break;
   }
+  case "port": {
+    const [name, spec] = rest;
+    if (!fs.existsSync(file(name))) fail(1, `Error response from daemon: No such container: ${name}`);
+    const data = JSON.parse(fs.readFileSync(file(name), "utf8"));
+    if (!data.portMap || (spec && spec !== data.portMap.containerPort)) fail(1, `No public port '${spec}' published for ${name}`);
+    process.stdout.write(`${data.portMap.bind}:${data.portMap.hostPort}\n`);
+    break;
+  }
   case "exec": {
     const [name, ...cmd] = rest;
     if (!fs.existsSync(file(name))) fail(1, `Error response from daemon: No such container: ${name}`);
     if (cmd[0] === "xdpyinfo") break;
+    if (cmd[0] === "bash" && cmd[1] === "-c" && /\/dev\/tcp\/127\.0\.0\.1\/\d+/.test(cmd[2] || "")) break;
     const argv = cmd[0] === "ws-run" ? cmd.slice(cmd.indexOf("--") + 1) : cmd;
     const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit", env: { ...process.env, WS_CONTAINER: name } });
     process.exit(result.status ?? 1);

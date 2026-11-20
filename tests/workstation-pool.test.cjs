@@ -549,3 +549,41 @@ test("slot-mutex markers of reused pids or past the backstop age are removed; a 
   assert.equal(fs.existsSync(expired), false, "a marker not refreshed for 30 minutes is removed even if its pid looks alive");
   assert.equal(f.cli("release", ["--pool", "ws", "--token", claimed(afterBackstop).token]).code, 0);
 });
+
+test("read-only viewing allocates per-slot ports, binds localhost by default, allows LAN opt-in, and stays off otherwise", t => {
+  const f = fixture(t, { slots: 2 });
+  const off = f.cli("claim", ["--pool", "ws", "--json"]);
+  assert.equal(off.code, 0, off.stderr);
+  const offData = JSON.parse(off.stdout);
+  assert.equal(offData.watch, undefined);
+  const offRun = JSON.parse(fs.readFileSync(path.join(f.root, "docker", "containers", `${offData.workstation}.json`), "utf8"));
+  assert.equal(offRun.portMap, null);
+  assert.equal(offRun.cmd.includes("--watch"), false);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", offData.token]).code, 0);
+
+  const on = f.cli("claim", ["--pool", "ws", "--watch", "--json"]);
+  assert.equal(on.code, 0, on.stderr);
+  const onData = JSON.parse(on.stdout);
+  assert.equal(onData.watch.bind, "127.0.0.1");
+  assert.equal(onData.watch.port, 46080);
+  assert.match(onData.watch.url, /^http:\/\/127\.0\.0\.1:46080\/vnc\.html\?.*view_only=1/);
+  const claimJson = JSON.parse(fs.readFileSync(path.join(onData.out, "claim.json"), "utf8"));
+  assert.equal(claimJson.watch.url, onData.watch.url);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", onData.token]).code, 0);
+
+  f.writeConfig({ slots: 2, watch: { enabled: true, bind: "0.0.0.0", port: 16080 } });
+  const first = JSON.parse(f.cli("claim", ["--pool", "ws", "--json"]).stdout);
+  const second = JSON.parse(f.cli("claim", ["--pool", "ws", "--json"]).stdout);
+  assert.equal(first.watch.bind, "0.0.0.0");
+  assert.equal(first.watch.port, 16080);
+  assert.equal(second.watch.port, 16081);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", first.token]).code, 0);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", second.token]).code, 0);
+
+  const forcedOff = JSON.parse(f.cli("claim", ["--pool", "ws", "--no-watch", "--json"]).stdout);
+  assert.equal(forcedOff.watch, undefined);
+  assert.equal(f.cli("release", ["--pool", "ws", "--token", forcedOff.token]).code, 0);
+
+  assert.equal(f.cli("claim", ["--pool", "ws", "--watch-bind", "not-an-ip"]).code, 2);
+  assert.equal(f.cli("claim", ["--pool", "ws", "--watch-port", "99999"]).code, 2);
+});

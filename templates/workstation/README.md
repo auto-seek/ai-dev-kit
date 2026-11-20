@@ -44,7 +44,7 @@ and the .NET SDK by file name and SHA512 from the publishers' own checksum lists
 The image entrypoint is `tini -- ws-run`.
 
 ```text
-ws-run [--screen WxHxD] [--out DIR] [--timeout SECONDS] [--shot NAME] [-- command...]
+ws-run [--screen WxHxD] [--out DIR] [--timeout SECONDS] [--shot NAME] [--watch] [--watch-port PORT] [--watch-vnc-port PORT] [-- command...]
 ```
 
 - **Batch** (`-- command...`): start a screen on `:99` unless one is already up,
@@ -55,6 +55,12 @@ ws-run [--screen WxHxD] [--out DIR] [--timeout SECONDS] [--shot NAME] [-- comman
 - **Session** (no command): keep the screen up until the container stops. Drive
   it step by step with `docker exec <ctr> ws-run -- ...`, `ws-shot`, `ws-input`;
   batch runs inside a session reuse its screen and leave it up.
+- **Read-only live view** (`--watch` or `WS_WATCH=1`): starts `x11vnc -viewonly`
+  (localhost only, port `5900` / `--watch-vnc-port`) and `websockify` serving
+  noVNC on `0.0.0.0:6080` (`--watch-port` / `WS_WATCH_PORT`). Pointer and key
+  events from the browser are discarded by `x11vnc -viewonly` and cannot reach
+  the display or game (`x11vnc` polls with `-wait 10 -defer 10`). When `--watch`
+  is off (the default), neither process starts and zero ports are exposed.
 
 `ws-run.json`:
 
@@ -140,8 +146,16 @@ docker exec <container> ws-run --timeout 1800 -- <start command> <args>
 
 and release or reclaim runs `docker rm -f <container>`, so the next holder gets
 a new container. The claimer also writes `claim.json` into the evidence
-directory: pool, slot, workstation, image and image id, screen and start
-command, which a player review cites.
+directory: pool, slot, workstation, image and image id, screen, optional `watch`
+URL/port metadata, and start command, which a player review cites.
+
+To open a read-only browser view on a claimed workstation, set `"watch": true`
+(or `{"enabled": true, "bind": "127.0.0.1", "port": 0}`) in the pool's
+`workstations.json` entry or pass `--watch` (`--watch-bind <ip>`, `--watch-port <port>`,
+`--no-watch`) to `resource-lock.cjs claim` / `run`. Port `0` picks a free host
+port per slot, bound to `127.0.0.1` by default (pass `--watch-bind 0.0.0.0` for
+LAN access); the claimer prints `view=http://<host>:<port>/vnc.html` and records
+`watch` in `claim.json`.
 
 - The worktree is mounted at its host path so build outputs that record
   absolute paths stay valid on both sides. Nothing that exposes a host display
@@ -202,6 +216,15 @@ workstations at 2.5 GB fit (7.5 GiB declared; 7.1 GiB measured together).
 Workstations that also build need 3 GB: two fit, and three need a Docker VM of
 at least 10 GB. The pool refuses a configuration whose slots × memory exceeds
 what Docker has.
+
+Measured `--watch` (read-only VNC + noVNC) overhead on the base image at
+`1920x1080x24`:
+
+- **Watch off (default)**: 0 extra processes, 0 published ports, 0 MiB overhead
+  (idle base container `memory.current` 15.03 MiB, `memory.peak` 16.42 MiB).
+- **Watch on (`--watch`)**: `x11vnc` (~18.32 MiB RSS) + `websockify`
+  (~33.80 MiB RSS), adding ~38.97 MiB cgroup `memory.current` idle over base
+  and ~45.46 MiB `memory.peak` while streaming full-screen X11 updates at ~30 fps.
 
 ## Godot example
 

@@ -8,6 +8,27 @@ lockstep — see the Release Convention in `CLAUDE.md`.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-21
+
+### Added
+- Read-only live web viewer for workstation containers via `x11vnc -viewonly` +
+  `novnc` / `websockify`: `templates/workstation/base/Dockerfile` installs pinned
+  `x11vnc`, `novnc` and `websockify`; `ws-run` gains `--watch`,
+  `--watch-port` and `--watch-vnc-port` (or `WS_WATCH` / `WS_WATCH_PORT` /
+  `WS_WATCH_VNC_PORT`) and tears them down cleanly on stop while leaving them
+  completely off by default (zero processes, zero published ports, zero overhead).
+- `scripts/resource-lock.cjs` adds pool `watch` configuration (`boolean` or
+  `{ enabled, bind, port }`) and `--watch`, `--no-watch`, `--watch-bind`,
+  `--watch-port` CLI options for `claim` / `run`, allocating an ephemeral host
+  port per slot bound to `127.0.0.1` by default (optional LAN bind) and
+  recording `watch` URL/port metadata in `claim.json` and claim output.
+- Workstation tests (`tests/workstation-pool.test.cjs` with `tests/fake-docker.cjs`
+  and Docker-backed `tests/workstation.test.cjs`) verify HTTP/WebSocket RFB
+  live frames, `-viewonly` rejection of viewer key/pointer events, distinct
+  per-slot ports, LAN opt-in, and zero ports/processes when off; workstation
+  docs record the measured memory overhead (`~52 MiB` combined RSS, `~39–45 MiB`
+  cgroup delta at `1920x1080x24`).
+
 ## [0.33.0] - 2026-11-06
 
 ### Changed

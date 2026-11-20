@@ -78,15 +78,18 @@ const EVENTS = "reclaimed.jsonl";
 const POOL_DEFAULTS = {
   slots: 3, cpus: 3, memory: "2.5g", screen: "1920x1080x24", user: "host", min_free_disk: "5g",
   timeout_seconds: 1800, max_hold_seconds: 3600, warn_hold_seconds: 1800,
+  watch: { enabled: false, bind: "127.0.0.1", port: 0 },
 };
+const WATCH_CONTAINER_PORT = 6080;
+const IPV4 = /^(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/;
 const USAGE = `usage:
   resource-lock.cjs run --name <res> [--wait <s|inf>] [--label <text>] [--max-hold <s>] -- <command...>
   resource-lock.cjs acquire --name <res> [--wait <s|inf>] [--label <text>] [--max-hold <s>] [--owner-pid <pid>]
   resource-lock.cjs release --name <res> --token <token>
   resource-lock.cjs status --name <res> [--json]
 workstation pools (.ai-dev-kit/workstations.json):
-  resource-lock.cjs claim --pool <pool> [--wait <s|inf>] [--label <text>] [--max-hold <s>] [--owner-pid <pid>] [--out <dir>] [--json]
-  resource-lock.cjs run --pool <pool> [--wait <s|inf>] [--label <text>] [--max-hold <s>] [--timeout <s>] [--out <dir>] [-- <args...>]
+  resource-lock.cjs claim --pool <pool> [--wait <s|inf>] [--label <text>] [--max-hold <s>] [--owner-pid <pid>] [--out <dir>] [--watch] [--watch-bind <ip>] [--watch-port <port>] [--no-watch] [--json]
+  resource-lock.cjs run --pool <pool> [--wait <s|inf>] [--label <text>] [--max-hold <s>] [--timeout <s>] [--out <dir>] [--watch] [--watch-bind <ip>] [--watch-port <port>] [--no-watch] [-- <args...>]
   resource-lock.cjs renew --pool <pool> --token <token>
   resource-lock.cjs release --pool <pool> --token <token>
   resource-lock.cjs status --pool <pool> [--json] [--warn-hold <s>] [--no-docker]
@@ -114,12 +117,14 @@ function parse(argv) {
     "--name": "name", "--wait": "wait", "--label": "label", "--max-hold": "maxHold",
     "--token": "token", "--owner-pid": "ownerPid", "--root": "root", "--project": "project",
     "--pool": "pool", "--out": "out", "--timeout": "timeout", "--warn-hold": "warnHold", "--config": "config",
-    "--evidence-days": "evidenceDays",
+    "--evidence-days": "evidenceDays", "--watch-bind": "watchBind", "--watch-port": "watchPort",
   };
   for (let i = 0; i < flags.length; i++) {
     if (flags[i] === "--json") { options.json = true; continue; }
     if (flags[i] === "--no-docker") { options.noDocker = true; continue; }
     if (flags[i] === "--dry-run") { options.dryRun = true; continue; }
+    if (flags[i] === "--watch") { options.watch = true; continue; }
+    if (flags[i] === "--no-watch") { options.noWatch = true; continue; }
     const key = valued[flags[i]];
     if (!key) throw new UsageError(`unknown option: ${flags[i]}`);
     if (i + 1 >= flags.length) throw new UsageError(`missing value for ${flags[i]}`);
@@ -148,6 +153,17 @@ function parse(argv) {
   if (options.noDocker && command !== "status") throw new UsageError("--no-docker applies to status");
   if ((options.dryRun || options.evidenceDays !== undefined) && command !== "prune") throw new UsageError("--dry-run and --evidence-days apply to prune");
   if (options.evidenceDays !== undefined && !/^\d+$/.test(options.evidenceDays)) throw new UsageError("--evidence-days takes a whole number of days");
+  const hasWatchFlag = Boolean(options.watch || options.noWatch || options.watchBind !== undefined || options.watchPort !== undefined);
+  if (hasWatchFlag && !(pooled && ["claim", "run"].includes(command))) {
+    throw new UsageError("--watch, --no-watch, --watch-bind and --watch-port apply to claim and run --pool");
+  }
+  if (options.watch && options.noWatch) throw new UsageError("use --watch or --no-watch, not both");
+  if (options.watchBind !== undefined && !IPV4.test(options.watchBind)) {
+    throw new UsageError("--watch-bind must be an IPv4 address such as 127.0.0.1 or 0.0.0.0");
+  }
+  if (options.watchPort !== undefined && (!/^\d+$/.test(options.watchPort) || Number(options.watchPort) > 65535)) {
+    throw new UsageError("--watch-port must be 0 (auto) or 1..65535");
+  }
   return options;
 }
 
@@ -554,7 +570,7 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
   const at = key => `pools.${name}.${key}`;
   if (!isObject(raw)) fail(`pools.${name} must be an object`);
   onlyKeys(raw, ["image", "build", "slots", "cpus", "memory", "screen", "env", "mounts", "start", "user", "min_free_disk",
-    "requires", "prepare", "timeout_seconds", "max_hold_seconds", "warn_hold_seconds"], `pools.${name}`, fail);
+    "requires", "prepare", "timeout_seconds", "max_hold_seconds", "warn_hold_seconds", "watch"], `pools.${name}`, fail);
   const pool = { ...POOL_DEFAULTS, ...raw, name };
   if (typeof pool.image !== "string" || !/^[a-z0-9][\w./:@-]*$/i.test(pool.image)) fail(`${at("image")} must name a Docker image; add "build" to build it from a Dockerfile`);
   if (raw.build !== undefined) {
@@ -601,6 +617,19 @@ function poolSettings(name, raw, base, warnHoldS, fail) {
   pool.timeoutS = wholeSeconds(raw.timeout_seconds, POOL_DEFAULTS.timeout_seconds, at("timeout_seconds"), 0, fail);
   pool.maxHoldS = wholeSeconds(raw.max_hold_seconds, POOL_DEFAULTS.max_hold_seconds, at("max_hold_seconds"), 1, fail);
   pool.warnHoldS = wholeSeconds(raw.warn_hold_seconds, warnHoldS, at("warn_hold_seconds"), 0, fail);
+  if (raw.watch === undefined) pool.watch = { ...POOL_DEFAULTS.watch };
+  else if (typeof raw.watch === "boolean") pool.watch = { ...POOL_DEFAULTS.watch, enabled: raw.watch };
+  else if (isObject(raw.watch)) {
+    onlyKeys(raw.watch, ["enabled", "bind", "port"], at("watch"), fail);
+    const enabled = raw.watch.enabled ?? false;
+    if (typeof enabled !== "boolean") fail(`${at("watch.enabled")} must be true or false`);
+    const bind = raw.watch.bind ?? POOL_DEFAULTS.watch.bind;
+    if (typeof bind !== "string" || !IPV4.test(bind)) fail(`${at("watch.bind")} must be an IPv4 address such as 127.0.0.1 or 0.0.0.0`);
+    const port = raw.watch.port ?? POOL_DEFAULTS.watch.port;
+    if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`${at("watch.port")} must be 0 (auto) or 1..65535`);
+    if (port > 0 && port + pool.slots - 1 > 65535) fail(`${at("watch.port")} + slots exceeds 65535`);
+    pool.watch = { enabled, bind, port };
+  } else fail(`${at("watch")} must be a boolean or {enabled, bind, port}`);
   return pool;
 }
 
@@ -906,27 +935,68 @@ function blockedPool(ctx, options, outcome) {
   process.exit(BLOCKED);
 }
 
+function resolveWatch(pool, options) {
+  const enabled = options.noWatch ? false : Boolean(options.watch || options.watchBind !== undefined || options.watchPort !== undefined || pool.watch.enabled);
+  if (!enabled) return { enabled: false, bind: null, port: 0 };
+  const bind = options.watchBind ?? pool.watch.bind;
+  const port = options.watchPort !== undefined ? Number(options.watchPort) : pool.watch.port;
+  return { enabled: true, bind, port };
+}
+
+function viewHostFor(bind) {
+  if (bind !== "0.0.0.0") return bind;
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) return entry.address;
+    }
+  }
+  return "127.0.0.1";
+}
+
 // Every claim starts a new container from the image: the clean state.
-async function startWorkstation(ctx, slot, container, token, out, project) {
+async function startWorkstation(ctx, slot, container, token, out, project, watch = { enabled: false }) {
   const { pool } = ctx;
   for (const mount of pool.mounts) if (!fs.existsSync(mount.source)) throw new ConfigError(`pool ${pool.name} mounts ${mount.source}, which does not exist`);
   // Leftovers of this slot whose removal failed earlier.
   for (const row of poolContainers(ctx.id, pool.name, slot)) docker(["rm", "-f", row.name]);
   const env = { LP_NUM_THREADS: String(Math.max(1, Math.floor(pool.cpus))), WS_SCREEN: pool.screen, ...pool.env };
+  if (watch.enabled) { env.WS_WATCH = "1"; env.WS_WATCH_PORT = String(WATCH_CONTAINER_PORT); }
   const args = ["run", "-d", "--name", container,
     "--label", `${LABEL}=${ctx.id}/${pool.name}`, "--label", `${LABEL}.slot=${slot}`, "--label", `${LABEL}.token=${token}`,
     "--cpus", String(pool.cpus), "--memory", String(pool.memoryBytes), "--memory-swap", String(pool.memoryBytes)];
+  if (watch.enabled) {
+    const hostPort = watch.port > 0 ? watch.port + slot : 0;
+    if (hostPort > 65535) throw new ConfigError(`pool ${pool.name} watch port ${watch.port} + slot ${slot} exceeds 65535`);
+    args.push("-p", `${watch.bind}:${hostPort > 0 ? hostPort : ""}:${WATCH_CONTAINER_PORT}`);
+  }
   if (pool.user === "host") args.push("--user", `${process.getuid()}:${process.getgid()}`);
   for (const [key, value] of Object.entries(env)) args.push("-e", `${key}=${value}`);
   // The worktree keeps its host path, so absolute paths in build outputs hold on both sides.
   args.push("-v", `${project}:${project}`, "-w", project, "-v", `${out}:/ws/out`);
   for (const mount of pool.mounts) args.push("-v", `${mount.source}:${mount.target}${mount.readonly ? ":ro" : ""}`);
-  dockerOut([...args, pool.image, "--screen", pool.screen], `cannot start workstation ${container}`);
+  dockerOut([...args, pool.image, "--screen", pool.screen, ...(watch.enabled ? ["--watch"] : [])], `cannot start workstation ${container}`);
+  let screenUp = false;
   for (let i = 0; i < 100; i++) {
-    if (docker(["exec", container, "xdpyinfo"], 10000).status === 0) return;
+    if (docker(["exec", container, "xdpyinfo"], 10000).status === 0) { screenUp = true; break; }
     await sleep(100);
   }
-  throw new DockerError(`workstation ${container} started but its screen did not answer within 10s`);
+  if (!screenUp) throw new DockerError(`workstation ${container} started but its screen did not answer within 10s`);
+  if (!watch.enabled) return null;
+  let watchUp = false;
+  for (let i = 0; i < 100; i++) {
+    if (docker(["exec", container, "bash", "-c", `exec 3<>/dev/tcp/127.0.0.1/${WATCH_CONTAINER_PORT} && exec 3>&-`], 5000).status === 0) {
+      watchUp = true;
+      break;
+    }
+    await sleep(100);
+  }
+  if (!watchUp) throw new DockerError(`workstation ${container} watch server did not listen on port ${WATCH_CONTAINER_PORT} within 10s`);
+  const mapped = dockerOut(["port", container, `${WATCH_CONTAINER_PORT}/tcp`], `cannot read watch port of ${container}`).trim().split("\n")[0];
+  const match = /:(\d+)$/.exec(mapped);
+  if (!match) throw new DockerError(`unexpected docker port output for ${container}: ${mapped}`);
+  const port = Number(match[1]);
+  const host = viewHostFor(watch.bind);
+  return { enabled: true, bind: watch.bind, port, url: `http://${host}:${port}/vnc.html?autoconnect=1&resize=scale&view_only=1` };
 }
 
 // Undo a claim that did not complete, or end a run. The container is always
@@ -962,12 +1032,13 @@ function requirePrepared(ctx, project) {
 
 // claim.json ties the evidence directory to the workstation it came from; a
 // player review cites it. Written by the claimer, outside the container.
-function recordClaim(ctx, outcome, out, project, label) {
+function recordClaim(ctx, outcome, out, project, label, watchInfo = null) {
   const image = docker(["image", "inspect", "--format", "{{.Id}}", ctx.pool.image]);
   fs.writeFileSync(path.join(out, "claim.json"), `${JSON.stringify({
     schema_version: 1, pool: ctx.pool.name, slot: outcome.slot, workstation: outcome.container, label,
     image: ctx.pool.image, image_id: image.status === 0 ? image.stdout.trim() : null, screen: ctx.pool.screen,
     start: ctx.pool.start, cpus: ctx.pool.cpus, memory: ctx.pool.memory, worktree: project, host: HOST,
+    ...(watchInfo ? { watch: { enabled: true, bind: watchInfo.bind, port: watchInfo.port, url: watchInfo.url } } : {}),
     claimed_at: new Date().toISOString(),
   }, null, 2)}\n`);
 }
@@ -1005,19 +1076,26 @@ async function claim(options) {
   if (!outcome.held) blockedPool(ctx, options, outcome);
   assigned = outcome;
   const out = evidenceDir(ctx, options, token);
-  await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project);
-  recordClaim(ctx, outcome, out, project, label);
+  const watchSpec = resolveWatch(ctx.pool, options);
+  const watchInfo = await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project, watchSpec);
+  recordClaim(ctx, outcome, out, project, label, watchInfo);
   done = true;
   const tool = [process.execPath, __filename].map(quote).join(" ");
   const result = {
     token, pool: ctx.pool.name, slot: outcome.slot, workstation: outcome.container, out,
     lease_s: maxHoldMs / 1000, owner_pid: owner,
+    ...(watchInfo ? { watch_url: watchInfo.url, watch: { bind: watchInfo.bind, port: watchInfo.port, url: watchInfo.url } } : {}),
     exec: [DOCKER, "exec", outcome.container, "ws-run", "--timeout", String(ctx.pool.timeoutS), "--", ...ctx.pool.start].map(quote).join(" "),
     renew: [tool, "renew", "--pool", ctx.pool.name, "--token", token, ...commonFlags(options).map(quote)].join(" "),
     release: [tool, "release", "--pool", ctx.pool.name, "--token", token, ...commonFlags(options).map(quote)].join(" "),
   };
-  process.stdout.write(options.json ? `${JSON.stringify(result, null, 2)}\n`
-    : `${Object.entries(result).map(([key, value]) => `${key}=${value ?? ""}`).join("\n")}\n`);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    const plain = { ...result };
+    delete plain.watch;
+    process.stdout.write(`${Object.entries(plain).map(([key, value]) => `${key}=${value ?? ""}`).join("\n")}\n`);
+  }
 }
 
 async function runPool(options) {
@@ -1050,8 +1128,10 @@ async function runPool(options) {
   if (!outcome.held) blockedPool(ctx, options, outcome);
   assigned = outcome;
   const out = evidenceDir(ctx, options, token);
-  await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project);
-  recordClaim(ctx, outcome, out, project, label);
+  const watchSpec = resolveWatch(ctx.pool, options);
+  const watchInfo = await startWorkstation(ctx, outcome.slot, outcome.container, token, out, project, watchSpec);
+  recordClaim(ctx, outcome, out, project, label, watchInfo);
+  if (watchInfo) process.stderr.write(`watch_url=${watchInfo.url}\n`);
   const timeout = options.timeout !== undefined ? options.timeout : String(ctx.pool.timeoutS);
   child = spawn(DOCKER, ["exec", outcome.container, "ws-run", "--timeout", timeout, "--", ...ctx.pool.start, ...argv], {
     detached: true,
